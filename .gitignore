@@ -1,0 +1,12 @@
+# Project-local design tools and runtime cache.
+.agents/skills/
+.impeccable/
+.superpowers/
+node_modules/
+dist/
+artifacts/
+.local/
+*.tsbuildinfo
+
+# Portable application data during local development.
+Baudloom-data/

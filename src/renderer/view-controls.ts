@@ -1,0 +1,203 @@
+import {
+  DEFAULT_VIEW_LIMITS,
+  validateViewLimits,
+  estimateViewMemory,
+  type ViewLimits,
+} from "../view-settings";
+interface Preferences {
+  showTime: boolean;
+  showDirection: boolean;
+  timeWidth: number;
+  directionWidth: number;
+  fontSize: number;
+  limits: ViewLimits;
+}
+export function setupViewControls(
+  onGeometry: () => void,
+  onLimits: (limits: ViewLimits) => Promise<void>,
+  onError: (error: unknown) => void,
+) {
+  const key = "baudloom.view.v1";
+  const prefs: Preferences = {
+    showTime: true,
+    showDirection: true,
+    timeWidth: 118,
+    directionWidth: 52,
+    fontSize: 14,
+    limits: { ...DEFAULT_VIEW_LIMITS },
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
+    for (const field of ["showTime", "showDirection"] as const)
+      if (typeof saved[field] === "boolean") prefs[field] = saved[field];
+    for (const [field, min, max] of [
+      ["timeWidth", 64, 320],
+      ["directionWidth", 30, 160],
+      ["fontSize", 10, 28],
+    ] as const)
+      if (
+        Number.isFinite(saved[field]) &&
+        saved[field] >= min &&
+        saved[field] <= max
+      )
+        prefs[field] = saved[field];
+    if (saved.limits) prefs.limits = validateViewLimits(saved.limits);
+  } catch {}
+  const get = <T extends HTMLElement>(id: string) =>
+    document.getElementById(id) as T;
+  const main = document.querySelector("main")!;
+  const panel = get<HTMLElement>("view-settings");
+  const toggle = get<HTMLButtonElement>("view-options");
+  const time = get<HTMLInputElement>("show-time"),
+    dir = get<HTMLInputElement>("show-direction"),
+    font = get<HTMLInputElement>("log-font-size");
+  const rows = get<HTMLInputElement>("view-max-rows"),
+    chars = get<HTMLSelectElement>("view-max-chars");
+  function save() {
+    try {
+      localStorage.setItem(key, JSON.stringify(prefs));
+    } catch {}
+  }
+  function apply() {
+    main.classList.toggle("hide-time", !prefs.showTime);
+    main.classList.toggle("hide-direction", !prefs.showDirection);
+    main.style.setProperty("--time-width", `${prefs.timeWidth}px`);
+    main.style.setProperty("--direction-width", `${prefs.directionWidth}px`);
+    main.style.setProperty("--log-font-size", `${prefs.fontSize}px`);
+    for (const [id, field] of [
+      ["time-resizer", "timeWidth"],
+      ["direction-resizer", "directionWidth"],
+    ] as const)
+      get(id).setAttribute("aria-valuenow", String(Math.round(prefs[field])));
+    onGeometry();
+  }
+  function estimate() {
+    try {
+      const limits = validateViewLimits({
+        maxRows: Number(rows.value),
+        maxChars: Number(chars.value) * 1048576,
+      });
+      const { low, high } = estimateViewMemory(limits);
+      get("view-memory").textContent =
+        `缓存占满时粗估额外占用约 ${low}–${high} MiB（含原始缓存、文本/HEX、快照及界面）。不是实测值或硬上限，不含程序基础内存；行长、编码和补写过程都会影响占用。`;
+    } catch (error) {
+      get("view-memory").textContent = String(error);
+    }
+  }
+  time.checked = prefs.showTime;
+  dir.checked = prefs.showDirection;
+  font.value = String(prefs.fontSize);
+  rows.value = String(prefs.limits.maxRows);
+  chars.value = String(prefs.limits.maxChars / 1048576);
+  time.onchange = () => {
+    prefs.showTime = time.checked;
+    apply();
+    save();
+  };
+  dir.onchange = () => {
+    prefs.showDirection = dir.checked;
+    apply();
+    save();
+  };
+  font.onchange = () => {
+    if (!font.reportValidity()) return;
+    prefs.fontSize = Math.max(10, Math.min(28, Math.round(Number(font.value))));
+    apply();
+    save();
+  };
+  rows.oninput = chars.onchange = estimate;
+  get<HTMLButtonElement>("apply-view-limits").onclick = async () => {
+    const button = get<HTMLButtonElement>("apply-view-limits");
+    try {
+      const limits = validateViewLimits({
+        maxRows: Number(rows.value),
+        maxChars: Number(chars.value) * 1048576,
+      });
+      button.disabled = true;
+      await onLimits(limits);
+      prefs.limits = limits;
+      save();
+      get("view-applied").textContent =
+        "已应用；缩小上限会淘汰最早缓存，增大不会恢复已淘汰内容。";
+    } catch (error) {
+      onError(error);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  function close() {
+    panel.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  }
+  toggle.onclick = () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  };
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) {
+      close();
+      toggle.focus();
+    }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      !panel.hidden &&
+      !panel.contains(event.target as Node) &&
+      !toggle.contains(event.target as Node)
+    )
+      close();
+  });
+  for (const [id, field, min, max] of [
+    ["time-resizer", "timeWidth", 64, 320],
+    ["direction-resizer", "directionWidth", 30, 160],
+  ] as const) {
+    const handle = get<HTMLElement>(id);
+    let origin = 0,
+      size = 0,
+      dragging = false;
+    const change = (value: number) => {
+      prefs[field] = Math.max(min, Math.min(max, value));
+      apply();
+    };
+    handle.onpointerdown = (event) => {
+      if (event.button !== 0) return;
+      origin = event.clientX;
+      size = prefs[field];
+      dragging = true;
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+    handle.onpointermove = (event) => {
+      if (dragging) change(size + event.clientX - origin);
+    };
+    const finish = () => {
+      if (dragging) {
+        dragging = false;
+        save();
+      }
+    };
+    handle.onpointerup =
+      handle.onpointercancel =
+      handle.onlostpointercapture =
+        finish;
+    handle.ondblclick = () => {
+      change(field === "timeWidth" ? 118 : 52);
+      save();
+    };
+    handle.onkeydown = (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      change(
+        event.key === "Home"
+          ? field === "timeWidth"
+            ? 118
+            : 52
+          : prefs[field] + (event.key === "ArrowRight" ? 8 : -8),
+      );
+      save();
+    };
+  }
+  apply();
+  estimate();
+  return { limits: prefs.limits };
+}

@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Baudloom</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="titlebar">
+        <strong>Baudloom</strong><span>0.1.2</span
+        ><span id="connection-state">未连接</span
+        ><button id="history">打开会话</button>
+      </header>
+      <nav class="toolbar" aria-label="连接与日志工具">
+        <div class="connection">
+          <label for="target">设备</label
+          ><select id="target" aria-label="设备">
+            <option value="">正在枚举…</option></select
+          ><button id="refresh" title="重新枚举设备">刷新</button
+          ><select id="baud" aria-label="波特率">
+            <option>9600</option>
+            <option selected>115200</option>
+            <option>921600</option></select
+          ><span class="format-note">8N1</span
+          ><button id="connect" disabled>连接</button>
+          <label
+            class="check-label record-choice"
+            title="可在连接前或连接中勾选。连接中勾选会补写仍保留的原始缓存，并持续保存到断开；已淘汰事件无法恢复。"
+            ><input id="save-session" type="checkbox" />保存会话</label
+          >
+        </div>
+        <div class="tools">
+          <label for="search">查找</label
+          ><input
+            id="search"
+            type="search"
+            placeholder="筛选当前缓存"
+            autocomplete="off"
+          /><button id="pause" aria-pressed="false">暂停滚动</button
+          ><button id="clear">清屏</button><button id="mark">标记</button>
+        </div>
+      </nav>
+      <div id="device-name" class="device-name" hidden></div>
+      <div id="error" role="alert" hidden></div>
+      <div id="notice" role="status" hidden></div>
+      <div class="workspace">
+        <div
+          id="cross-splitter"
+          class="cross-splitter"
+          role="button"
+          tabindex="0"
+          aria-label="同时调整三个区域大小"
+          title="交汇处拖动同时调整宽高；方向键调整，双击复位"
+          hidden
+        ></div>
+        <div class="session-pane">
+          <main>
+            <div class="log-heading">
+              <span id="session-title">选择设备后连接，或打开已有记录</span
+              ><label
+                >显示
+                <select id="rx-format" aria-label="接收显示格式">
+                  <option value="text">UTF-8</option>
+                  <option value="hex">HEX</option>
+                </select></label
+              ><button
+                id="view-options"
+                aria-expanded="false"
+                aria-controls="view-settings"
+              >
+                视图设置
+              </button>
+            </div>
+            <div
+              id="view-settings"
+              class="view-settings"
+              role="region"
+              aria-label="接收视图设置"
+              hidden
+            >
+              <div class="view-setting-row">
+                <label class="check-label"
+                  ><input
+                    id="show-time"
+                    type="checkbox"
+                    checked
+                  />接收时间</label
+                ><label class="check-label"
+                  ><input
+                    id="show-direction"
+                    type="checkbox"
+                    checked
+                  />方向</label
+                ><label
+                  >字号
+                  <input
+                    id="log-font-size"
+                    type="number"
+                    min="10"
+                    max="28"
+                    step="1"
+                    value="14"
+                  />
+                  px</label
+                >
+              </div>
+              <p>拖动表头列边界调整宽度，双击恢复默认。</p>
+              <div class="view-setting-row">
+                <label
+                  >缓存上限
+                  <input
+                    id="view-max-rows"
+                    type="number"
+                    min="1000"
+                    max="50000"
+                    step="1000"
+                    value="10000"
+                  />
+                  行</label
+                ><label
+                  >字符容量
+                  <select id="view-max-chars">
+                    <option>1</option>
+                    <option selected>4</option>
+                    <option>8</option>
+                    <option>16</option>
+                  </select>
+                  Mi</label
+                ><button id="apply-view-limits">应用</button>
+              </div>
+              <p>
+                文本和 HEX
+                各自限制行数与字符数，达到任一上限淘汰最早内容。另保留同数量上限的原始事件，容量为所选数值的
+                MiB，用于补写；事件与显示行不一一对应。
+              </p>
+              <p id="view-memory"></p>
+              <p id="view-applied" role="status"></p>
+            </div>
+            <div class="column-head">
+              <span class="time-column"
+                >接收时间<span
+                  id="time-resizer"
+                  class="column-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整接收时间列宽"
+                  aria-valuemin="64"
+                  aria-valuemax="320"
+                  tabindex="0"
+                  title="拖动调整列宽；双击复位"
+                ></span
+              ></span>
+              <span class="direction-column"
+                >方向<span
+                  id="direction-resizer"
+                  class="column-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整方向列宽"
+                  aria-valuemin="30"
+                  aria-valuemax="160"
+                  tabindex="0"
+                  title="拖动调整列宽；双击复位"
+                ></span></span
+              ><span>内容</span>
+            </div>
+            <div id="log" tabindex="0" aria-label="会话日志">
+              <p class="empty">
+                选择串口后点击连接。未连接时也可先准备发送内容。
+              </p>
+            </div>
+            <div class="view-status">
+              <span id="view-state">等待连接</span
+              ><span id="counts">RX 0 B · TX 0 B</span>
+            </div>
+          </main>
+          <div
+            id="bottom-splitter"
+            class="splitter horizontal-splitter"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="调整日志与发送区高度"
+            tabindex="0"
+            title="拖动调整高度；双击恢复默认"
+          ></div>
+          <section class="composer" aria-label="发送命令">
+            <div class="send-meta">
+              <div class="send-context">
+                <span>发送至</span><strong id="send-target">未选择设备</strong
+                ><span id="send-connection">未连接，可先编辑</span>
+              </div>
+              <button
+                id="toggle-multi"
+                type="button"
+                aria-expanded="false"
+                aria-controls="command-bank"
+              >
+                多条发送
+              </button>
+              <span class="send-shortcut">Ctrl + Enter 发送 · Enter 换行</span>
+            </div>
+            <form id="send-form">
+              <div class="send-editor">
+                <textarea
+                  id="command"
+                  maxlength="196608"
+                  rows="3"
+                  aria-label="待发送命令"
+                  placeholder="输入文本或十六进制字节…"
+                  spellcheck="false"
+                ></textarea>
+                <button id="send" class="primary" type="submit" disabled>
+                  发送
+                </button>
+              </div>
+              <div class="send-toolbar">
+                <label
+                  >格式
+                  <select id="tx-format" aria-label="发送格式">
+                    <option value="text">文本</option>
+                    <option value="hex">HEX</option>
+                  </select></label
+                >
+                <label
+                  >末尾
+                  <select id="ending" aria-label="换行符">
+                    <option value="crlf">CRLF</option>
+                    <option value="cr">CR</option>
+                    <option value="lf">LF</option>
+                    <option value="none">无换行</option>
+                  </select></label
+                >
+                <label class="check-label"
+                  ><input
+                    type="checkbox"
+                    id="clear-after-send"
+                  />发送后清空</label
+                >
+                <select id="send-history" aria-label="发送历史">
+                  <option value="">发送历史（空）</option>
+                </select>
+                <button id="clear-command" type="button">清空发送区</button>
+              </div>
+              <div class="checksum-toolbar">
+                <label
+                  >加校验
+                  <select id="checksum" aria-label="自动追加校验"></select
+                ></label>
+                <label
+                  >第
+                  <input
+                    id="checksum-start"
+                    type="number"
+                    min="1"
+                    max="65536"
+                    value="1"
+                    aria-label="校验起始字节"
+                  />
+                  字节</label
+                >
+                <label
+                  >至
+                  <input
+                    id="checksum-end"
+                    type="number"
+                    min="1"
+                    max="65536"
+                    placeholder="末尾"
+                    aria-label="校验结束字节，留空为末尾"
+                /></label>
+                <select id="checksum-order" aria-label="校验字节顺序">
+                  <option value="little">低位在前</option>
+                  <option value="big">高位在前</option>
+                </select>
+                <output id="checksum-value" aria-live="polite"></output>
+              </div>
+              <div class="timing-toolbar">
+                <label
+                  >间隔
+                  <input
+                    id="single-interval"
+                    type="number"
+                    min="100"
+                    max="3600000"
+                    step="1"
+                    value="1000"
+                    aria-label="单条发送间隔"
+                  />
+                  ms</label
+                ><button id="single-timer" type="button">定时发送</button
+                ><button id="save-command" type="button">加入多条</button>
+                <span id="schedule-state" role="status">定时发送未启动</span>
+              </div>
+            </form>
+            <div
+              id="wire-preview"
+              title="内容 → 校验 → 文本换行；校验按指定字节范围计算，不包含附加换行"
+            ></div>
+            <div class="send-feedback">
+              <span id="send-bytes">待发 0 B</span
+              ><span id="send-result" role="status"></span>
+            </div>
+          </section>
+        </div>
+        <div
+          id="side-splitter"
+          class="splitter vertical-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整多条发送宽度"
+          tabindex="0"
+          title="拖动调整宽度；双击恢复默认"
+          hidden
+        ></div>
+        <aside id="command-bank" aria-label="多条发送" hidden>
+          <div class="bank-heading">
+            <strong>多条发送</strong
+            ><button id="add-command" type="button">添加一条</button
+            ><button id="collapse-multi" type="button">收起</button>
+          </div>
+          <p class="bank-hint">
+            勾选条目循环发送 · 每条的换行、备注和校验在“设置”中。
+          </p>
+          <div id="command-list"></div>
+          <div class="bank-timing">
+            <label
+              >间隔
+              <input
+                id="multi-interval"
+                type="number"
+                min="100"
+                max="3600000"
+                step="1"
+                value="1000"
+                aria-label="多条发送间隔"
+              />
+              ms</label
+            ><button id="multi-timer" type="button">循环发送勾选项</button>
+          </div>
+        </aside>
+      </div>
+      <footer class="statusbar">
+        <button id="directory" title="修改记录目录">记录目录</button
+        ><span id="directory-path"></span
+        ><span id="record-state">未保存 · 可勾选保存并补写缓存</span>
+      </footer>
+    </div>
+    <script src="ui.js"></script>
+  </body>
+</html>

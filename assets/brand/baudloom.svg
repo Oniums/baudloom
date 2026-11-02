@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
+  <title>Baudloom</title>
+  <desc>Original interwoven B: two serial data paths share one upright, crossing with an over-under gap.</desc>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="#14466e"/>
+  <path d="M18 16 H34 C42 16 47 20 47 26 S42 36 34 36 H18" fill="none" stroke="#fff" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M18 28 H34 C43 28 48 32 48 40 S43 49 34 49 H18" fill="none" stroke="#14466e" stroke-width="11" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M18 28 H34 C43 28 48 32 48 40 S43 49 34 49 H18" fill="none" stroke="#80d8e7" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M18 15 V49" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+</svg>
