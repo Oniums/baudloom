@@ -1,6 +1,6 @@
 {
   "name": "baudloom",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "A local serial workbench with durable session records",
   "main": "dist/desktop/main.cjs",
@@ -17,7 +17,8 @@
     "package:win": "npm run build && node scripts/package.mjs win32",
     "format": "prettier --write \"src/**/*.{ts,html,css}\" \"tests/*.{ts,cjs}\" \"scripts/*.mjs\" package.json tsconfig.json .github/workflows/verify.yml",
     "format:check": "prettier --check \"src/**/*.{ts,html,css}\" \"tests/*.{ts,cjs}\" \"scripts/*.mjs\" package.json tsconfig.json .github/workflows/verify.yml",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "benchmark": "node --import tsx tests/performance-benchmark.ts"
   },
   "dependencies": {
     "serialport": "13.0.0"

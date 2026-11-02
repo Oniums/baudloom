@@ -173,9 +173,21 @@ export class SendPanel {
     get("command-bank").hidden = !open;
     get("toggle-multi").setAttribute("aria-expanded", String(open));
   }
+  private contextKey = "";
   setContext(snapshot: Snapshot | null, port: Port | undefined, busy: boolean) {
     this.snapshot = snapshot;
     this.busy = busy;
+    const key = JSON.stringify([
+      port?.path,
+      port?.label,
+      busy,
+      snapshot?.state,
+      snapshot?.target,
+      snapshot?.sessionId,
+      snapshot?.schedule,
+    ]);
+    if (key === this.contextKey) return;
+    this.contextKey = key;
     if (port && this.target !== port.path) {
       this.drafts.set(this.target, this.current());
       this.target = port.path;

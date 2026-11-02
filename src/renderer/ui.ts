@@ -1,3 +1,5 @@
+import { BAUD_RATES, parseBaudRate } from "../baud-rate";
+import { mergeSnapshot } from "../snapshot";
 import { setupViewControls } from "./view-controls";
 import { LogViewport } from "./log-viewport";
 import type { Api, Snapshot, Port } from "../shared";
@@ -13,10 +15,34 @@ const api = window.baudloom;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 const target = el<HTMLSelectElement>("target"),
-  baud = el<HTMLSelectElement>("baud"),
+  baud = el<HTMLInputElement>("baud"),
   command = el<HTMLTextAreaElement>("command");
 const search = el<HTMLInputElement>("search"),
   mode = el<HTMLSelectElement>("rx-format");
+const presets = el<HTMLSelectElement>("baud-presets");
+presets.append(
+  ...BAUD_RATES.map((rate) => new Option(String(rate), String(rate))),
+);
+presets.onchange = () => {
+  if (!presets.value) return;
+  baud.value = presets.value;
+  presets.value = "";
+  baud.dispatchEvent(new Event("input"));
+};
+try {
+  baud.value = String(
+    parseBaudRate(localStorage.getItem("baudloom.baud.v1") ?? "115200"),
+  );
+} catch {}
+baud.oninput = () => {
+  try {
+    parseBaudRate(baud.value);
+    baud.setCustomValidity("");
+  } catch (error) {
+    baud.setCustomValidity((error as Error).message);
+  }
+  baud.setAttribute("aria-invalid", String(!baud.validity.valid));
+};
 let ports: Port[] = [];
 let enumeration = 0;
 let latest: Snapshot | null = null;
@@ -46,14 +72,20 @@ const sendPanel = new SendPanel(
   failure,
   api,
 );
+let measuredLabel = "";
+let measuredWidth = 280;
 const measurement = document.createElement("canvas").getContext("2d")!;
 function updateDeviceName() {
   const selected = ports.find((p) => p.path === target.value);
   const label = selected?.label ?? "";
   target.title = label;
-  measurement.font = getComputedStyle(target).font;
-  const width = measurement.measureText(label).width + 44;
-  target.style.width = `${Math.min(440, Math.max(280, width))}px`;
+  if (label !== measuredLabel) {
+    measuredLabel = label;
+    measurement.font = getComputedStyle(target).font;
+    measuredWidth = measurement.measureText(label).width + 44;
+    target.style.width = `${Math.min(440, Math.max(280, measuredWidth))}px`;
+  }
+  const width = measuredWidth;
   const detail = el("device-name");
   detail.textContent = label;
   detail.hidden = width <= target.getBoundingClientRect().width + 1;
@@ -119,6 +151,7 @@ function render(s: Snapshot) {
   if (active && s.state !== "connecting")
     recording.checked = Boolean(s.sessionFile);
   baud.disabled = active;
+  presets.disabled = active;
   (el("refresh") as HTMLButtonElement).disabled = active;
   (el("directory") as HTMLButtonElement).disabled = active;
   (el("history") as HTMLButtonElement).disabled = active;
@@ -204,7 +237,14 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    render(await api.snapshot(mode.value as "text" | "hex"));
+    const requestedMode = mode.value as "text" | "hex";
+    const previous = latest;
+    const next = await api.snapshot(
+      requestedMode,
+      previous?.viewUpdate?.cursor,
+    );
+    if (mode.value === requestedMode && latest === previous)
+      render(mergeSnapshot(previous, next));
   } catch (error) {
     failure(error);
     latest = null;
@@ -258,12 +298,16 @@ el("connect").onclick = () =>
     }
     const port = ports.find((p) => p.path === target.value);
     if (!port) throw Error("请选择有效设备");
+    const baudRate = parseBaudRate(baud.value);
     await api.connect({
       target: port.path,
       source: port.source,
-      baudRate: Number(baud.value),
+      baudRate,
       saveSession: el<HTMLInputElement>("save-session").checked,
     });
+    try {
+      localStorage.setItem("baudloom.baud.v1", String(baudRate));
+    } catch {}
   });
 el("pause").onclick = () => {
   paused = !paused;
@@ -326,13 +370,26 @@ document.addEventListener("keydown", (e) => {
 void (async () => {
   try {
     await api.setViewLimits(viewControls.limits);
-    await refresh();
-    const path = await api.directory();
-    el("directory-path").textContent = path;
-    el("directory-path").title = path;
-    await poll();
+    await Promise.all([
+      refresh().catch(failure),
+      api
+        .directory()
+        .then((path) => {
+          el("directory-path").textContent = path;
+          el("directory-path").title = path;
+        })
+        .catch(failure),
+      poll(),
+    ]);
   } catch (error) {
     failure(error);
   }
-  setInterval(() => void poll(), 250);
+  const tick = async () => {
+    await poll();
+    setTimeout(
+      tick,
+      document.hidden || latest?.state !== "connected" ? 1000 : 100,
+    );
+  };
+  void tick();
 })();

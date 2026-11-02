@@ -1,3 +1,4 @@
+import { validBaudRate } from "../baud-rate";
 import {
   DEFAULT_VIEW_LIMITS,
   validateViewLimits,
@@ -6,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type {
   ConnectionConfig,
+  ViewCursor,
   ScheduleRequest,
   ScheduleStatus,
   SendRequest,
@@ -71,9 +73,7 @@ export class Capture {
       !config.target ||
       config.target.length > 1024 ||
       config.target.includes("\0") ||
-      !Number.isInteger(config.baudRate) ||
-      config.baudRate < 50 ||
-      config.baudRate > 4000000 ||
+      !validBaudRate(config.baudRate) ||
       (config.source === "synthetic" && config.target !== "demo")
     )
       return Promise.reject(Error("无效串口参数"));
@@ -422,11 +422,24 @@ export class Capture {
       this.reading = false;
     }
   }
-  snapshot(mode: "text" | "hex" = "text"): Snapshot {
-    const view =
-      mode === "hex"
-        ? { rows: this.view.hexRows, total: this.view.hexTotal }
-        : this.view.textSnapshot();
+  snapshot(mode: "text" | "hex" = "text", cursor?: ViewCursor): Snapshot {
+    const sessionId = this.connectionId || this.offlineFile;
+    const reset =
+      !cursor ||
+      cursor.sessionId !== sessionId ||
+      cursor.mode !== mode ||
+      !Number.isSafeInteger(cursor.lastId) ||
+      cursor.lastId < 0 ||
+      !Number.isSafeInteger(cursor.revision) ||
+      cursor.revision < 0 ||
+      cursor.revision > this.view.revision ||
+      cursor.lastId >
+        (mode === "hex" ? this.view.hexTotal : this.view.total + 1);
+    const view = this.view.snapshot(
+      mode,
+      reset ? 0 : cursor!.lastId,
+      !reset && cursor!.revision === this.view.revision,
+    );
     return {
       state: this.state,
       schedule: { ...this.schedule },
@@ -443,7 +456,18 @@ export class Capture {
           : this.droppedEvents,
       backfilledEvents: this.backfilledEvents,
       backfillActive: this.backfillActive,
-      rows: view.rows.slice(),
+      rows: view.rows,
+      viewUpdate: {
+        cursor: {
+          sessionId,
+          mode,
+          lastId: view.total,
+          revision: this.view.revision,
+        },
+        count: view.count,
+        firstId: view.firstId,
+        reset,
+      },
       totalRows: view.total,
       rxBytes: this.rxBytes,
       txBytes: this.txBytes,

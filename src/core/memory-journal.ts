@@ -1,3 +1,4 @@
+import { Deque } from "./deque";
 import {
   DEFAULT_VIEW_LIMITS,
   validateViewLimits,
@@ -28,7 +29,7 @@ export class MemoryJournal implements EventJournal {
   eventCount = 0;
   dropped = 0;
   private retained = 0;
-  private events: { event: StoredEvent; bytes: number }[] = [];
+  private events = new Deque<{ event: StoredEvent; bytes: number }>();
   constructor(
     private config: ConnectionConfig,
     private limits = DEFAULT_VIEW_LIMITS,
@@ -50,10 +51,10 @@ export class MemoryJournal implements EventJournal {
     return this.events.length;
   }
   buffered() {
-    return this.events.map((item) => item.event);
+    return this.events.slice().map((item) => item.event);
   }
   releaseBuffer() {
-    this.events = [];
+    this.events = new Deque();
     this.retained = 0;
   }
   onFault = (_error: Error) => {};

@@ -16,8 +16,9 @@ const outputs = await packager({
   arch: "x64",
   out: "artifacts",
   overwrite: true,
-  // Keep native prebuilds as real files inside the directory / portable payload.
-  asar: false,
+  // Archive JS together; native bindings must remain real files for dlopen.
+  asar: { unpack: "**/*.node" },
+  electronLanguages: ["zh-CN", "en-US"],
   prune: true,
   ignore: [
     /^\/(?:\.[^/]+|artifacts|prototype|src|tests|scripts|docs|Baudloom-data|assets)(?:\/|$)/,
@@ -43,6 +44,9 @@ if (platform === "win32") {
       portable: {
         artifactName: "Baudloom-${version}-win-x64.exe",
         requestExecutionLevel: "user",
+        // Direct zlib extraction avoids the intermediate 7z extraction/copy pass.
+        useZip: true,
+        unpackDirName: false,
       },
       compression: "normal",
     },

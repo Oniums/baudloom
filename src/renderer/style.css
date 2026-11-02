@@ -110,9 +110,27 @@ select:focus-visible,
   width: 300px;
   max-width: calc(100vw - 64px);
 }
-#baud {
-  width: 95px;
+.baud-control {
+  display: flex;
+  width: 120px;
+  flex: none;
 }
+#baud {
+  width: 92px;
+  min-width: 0;
+  border-radius: 3px 0 0 3px;
+}
+#baud-presets {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-left: 0;
+  border-radius: 0 3px 3px 0;
+}
+#baud[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
 .format-note {
   color: var(--muted);
   font-size: 11px;

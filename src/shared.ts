@@ -31,7 +31,19 @@ export interface LogRow {
   dir: string;
   text: string;
 }
+export interface ViewCursor {
+  sessionId: string;
+  mode: "text" | "hex";
+  lastId: number;
+  revision: number;
+}
 export interface Snapshot {
+  viewUpdate?: {
+    cursor: ViewCursor;
+    count: number;
+    firstId: number;
+    reset: boolean;
+  };
   state:
     | "idle"
     | "connecting"
@@ -108,7 +120,7 @@ export interface Api {
   send(request: SendRequest): Promise<void>;
   startSchedule(request: ScheduleRequest): Promise<void>;
   stopSchedule(): Promise<void>;
-  snapshot(mode?: "text" | "hex"): Promise<Snapshot>;
+  snapshot(mode?: "text" | "hex", cursor?: ViewCursor): Promise<Snapshot>;
   mark(message: string): Promise<void>;
   directory(): Promise<string>;
   chooseDirectory(): Promise<string | null>;

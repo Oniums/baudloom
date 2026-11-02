@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 
 let window: BrowserWindow;
 let core: UtilityProcess;
+let coreReady = Promise.resolve();
 let quitReady = false;
 let closing = false;
 let coreError = "";
@@ -47,7 +48,8 @@ const pending = new Map<
     timer: NodeJS.Timeout;
   }
 >();
-function request(method: string, ...args: unknown[]): Promise<any> {
+async function request(method: string, ...args: unknown[]): Promise<any> {
+  await coreReady;
   if (coreError) return Promise.reject(Error(coreError));
   if (pending.size >= 32) return Promise.reject(Error("操作过多，请稍后重试"));
   return new Promise((resolve, reject) => {
@@ -71,33 +73,41 @@ app
   .then(async () => {
     const prefs = join(app.getPath("userData"), "preferences.json");
     directory = paths.sessions;
-    try {
-      const data = JSON.parse(await readFile(prefs, "utf8"));
-      if (typeof data.directory === "string") directory = data.directory;
-    } catch {}
-    core = utilityProcess.fork(
-      join(__dirname, "../core/worker.cjs"),
-      [directory],
-      { serviceName: "Baudloom Capture", stdio: "pipe" },
-    );
-    core.on("message", (message: any) => {
-      const item = pending.get(message.id);
-      if (!item) return;
-      clearTimeout(item.timer);
-      pending.delete(message.id);
-      message.error
-        ? item.reject(Error(message.error))
-        : item.resolve(message.result);
-    });
-    core.on("exit", (code) => {
-      coreError = `采集进程已退出（${code}），连接已中断。若已启用保存，请重启应用后核对会话文件。`;
-      for (const item of pending.values()) {
+    coreReady = (async () => {
+      try {
+        const data = JSON.parse(await readFile(prefs, "utf8"));
+        if (typeof data.directory === "string") directory = data.directory;
+      } catch {}
+      core = utilityProcess.fork(
+        join(__dirname, "../core/worker.cjs"),
+        [directory],
+        { serviceName: "Baudloom Capture", stdio: "pipe" },
+      );
+      core.on("message", (message: any) => {
+        const item = pending.get(message.id);
+        if (!item) return;
         clearTimeout(item.timer);
-        item.reject(Error(coreError));
-      }
-      pending.clear();
+        pending.delete(message.id);
+        message.error
+          ? item.reject(Error(message.error))
+          : item.resolve(message.result);
+      });
+      core.on("exit", (code) => {
+        coreError = `采集进程已退出（${code}），连接已中断。若已启用保存，请重启应用后核对会话文件。`;
+        for (const item of pending.values()) {
+          clearTimeout(item.timer);
+          item.reject(Error(coreError));
+        }
+        pending.clear();
+      });
+      core.stderr?.on("data", (data) =>
+        console.error("[capture]", String(data)),
+      );
+    })();
+    void coreReady.catch((error) => {
+      coreError = String(error);
+      console.error(error);
     });
-    core.stderr?.on("data", (data) => console.error("[capture]", String(data)));
     const renderer = join(__dirname, "../renderer/index.html");
     window = new BrowserWindow({
       width: 1280,
@@ -107,6 +117,7 @@ app
       title: "Baudloom",
       icon: join(__dirname, "baudloom.png"),
       show: false,
+      backgroundColor: "#f7f8fa",
       webPreferences: {
         preload: join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -140,7 +151,10 @@ app
       "mark",
     ])
       handle(method, (...args) => request(method, ...args));
-    handle("directory", () => directory);
+    handle("directory", async () => {
+      await coreReady;
+      return directory;
+    });
     handle("choose-directory", async () => {
       const state = await request("snapshot");
       if (["connecting", "connected", "stopping"].includes(state.state))
@@ -208,7 +222,7 @@ app
           console.error(error);
         }
         quitReady = true;
-        core.kill();
+        core?.kill();
         app.quit();
       })();
     });
@@ -225,7 +239,7 @@ app.on("before-quit", (event) => {
     .catch((error) => console.error(error))
     .finally(() => {
       quitReady = true;
-      core.kill();
+      core?.kill();
       app.quit();
     });
 });

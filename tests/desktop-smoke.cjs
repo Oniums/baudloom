@@ -79,8 +79,23 @@ const path = require("node:path");
       !(await page.locator(".titlebar").textContent()).includes("预览"),
     );
     assert.equal(await page.locator("#save-session").isChecked(), false);
+    assert.ok((await page.locator("#baud-presets option").count()) >= 30);
+    for (const value of ["", "1e6", "115200.5", "4000001"]) {
+      await page.locator("#baud").fill(value);
+      await page.locator("#connect").click();
+      await expect(page.locator("#error")).toContainText("波特率");
+      assert.equal(
+        (await page.evaluate(() => window.baudloom.snapshot())).state,
+        "idle",
+      );
+    }
+    await page.locator("#baud-presets").selectOption("230400");
+    await expect(page.locator("#baud")).toHaveValue("230400");
+    await page.locator("#baud").fill("123456");
     await page.locator("#connect").click();
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
+    assert.equal(await page.locator("#baud").isDisabled(), true);
+    await expect(page.locator("#log")).toContainText("123456");
     await page.locator("#command").fill("unsaved-data");
     await page.locator("#send").click();
     await expect
@@ -434,6 +449,7 @@ const path = require("node:path");
       )
       .toBe(true);
     await page.reload();
+    await expect(page.locator("#baud")).toHaveValue("123456");
     assert.equal(
       await page.evaluate(() => localStorage.getItem("baudloom.layout.v1")),
       savedLayout,
@@ -583,6 +599,28 @@ const path = require("node:path");
     );
     const ports = await production.evaluate(() => window.baudloom.ports());
     assert.ok(ports.every((p) => p.source === "serial"));
+    // A blocked enumeration must not block the directory, initial view or editing.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler("ports");
+      ipcMain.handle(
+        "ports",
+        () =>
+          new Promise((resolve) => {
+            globalThis.releasePortEnumeration = () => resolve([]);
+          }),
+      );
+    });
+    await production.reload();
+    await expect(production.locator("#directory-path")).toContainText(
+      "sessions",
+    );
+    await expect(production.locator("#view-state")).toContainText("缓存 0");
+    assert.equal(await production.locator("#command").isEnabled(), true);
+    await app.evaluate(() => {
+      globalThis.releasePortEnumeration();
+      delete globalThis.releasePortEnumeration;
+    });
+    await expect(production.locator("#target")).toHaveText("未发现串口");
     await production.locator("#command").fill("123");
     await production.locator("#tx-format").selectOption("hex");
     await production.locator("#checksum").selectOption("sum8");
@@ -627,6 +665,7 @@ const path = require("node:path");
         rows,
         totalRows: rows.length,
         sessionId: "large-view-fixture",
+        viewUpdate: undefined,
         rxBytes: 5000000,
         viewLimits: { maxRows: 50000, maxChars: 16 * 1048576 },
       }));

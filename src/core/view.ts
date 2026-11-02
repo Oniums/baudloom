@@ -3,6 +3,7 @@ import {
   validateViewLimits,
   type ViewLimits,
 } from "../view-settings";
+import { Deque } from "./deque";
 import { LineDecoder } from "./text";
 import type { LogRow, StoredEvent } from "../shared";
 
@@ -14,6 +15,7 @@ export class View {
   }
   setLimits(limits: ViewLimits) {
     this.limits = validateViewLimits(limits);
+    this.revision++;
     for (const hex of [false, true]) {
       const rows = hex ? this.hexRows : this.rows;
       while (
@@ -26,8 +28,9 @@ export class View {
       }
     }
   }
-  rows: LogRow[] = [];
-  hexRows: LogRow[] = [];
+  private rows = new Deque<LogRow>();
+  private hexRows = new Deque<LogRow>();
+  revision = 0;
   total = 0;
   hexTotal = 0;
   private size = 0;
@@ -35,20 +38,33 @@ export class View {
   private decoder = new LineDecoder();
   private lastAt = "";
   private lastRxAt = "";
-  textSnapshot(): { rows: LogRow[]; total: number } {
-    const rows = this.rows.slice();
-    const partial = this.decoder.pendingText;
-    if (!partial) return { rows, total: this.total };
-    rows.push({
-      id: this.total + 1,
-      at: this.lastRxAt,
-      dir: "RX",
-      text: partial,
-    });
-    let size = this.size + partial.length;
-    while (rows.length > this.limits.maxRows || size > this.limits.maxChars)
-      size -= rows.shift()!.text.length;
-    return { rows, total: this.total + 1 };
+  textSnapshot() {
+    return this.snapshot("text");
+  }
+  snapshot(mode: "text" | "hex", afterId = 0, unchanged = false) {
+    const hex = mode === "hex";
+    const buffer = hex ? this.hexRows : this.rows;
+    const partial = hex ? "" : this.decoder.pendingText;
+    const total = (hex ? this.hexTotal : this.total) + (partial ? 1 : 0);
+    let start = 0;
+    let count = buffer.length + (partial ? 1 : 0);
+    let size = (hex ? this.hexSize : this.size) + partial.length;
+    while (count > this.limits.maxRows || size > this.limits.maxChars) {
+      size -= buffer.at(start++)!.text.length;
+      count--;
+    }
+    const firstId = buffer.at(start)?.id ?? (partial ? total : total + 1);
+    let low = start,
+      high = buffer.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (buffer.at(mid)!.id < afterId) low = mid + 1;
+      else high = mid;
+    }
+    const rows = unchanged ? [] : buffer.slice(low);
+    if (partial && !unchanged && total >= afterId)
+      rows.push({ id: total, at: this.lastRxAt, dir: "RX", text: partial });
+    return { rows, total, count, firstId };
   }
   private add(at: string, dir: string, text: string, hex = false) {
     const row = { id: hex ? ++this.hexTotal : ++this.total, at, dir, text };
@@ -66,6 +82,7 @@ export class View {
     }
   }
   apply(e: StoredEvent) {
+    this.revision++;
     this.lastAt = e.at;
     if (e.kind === "rx") {
       this.lastRxAt = e.at;
@@ -118,6 +135,7 @@ export class View {
     }
   }
   finish() {
+    this.revision++;
     for (const line of this.decoder.finish())
       this.add(this.lastAt, "RX", `${line} [未终止片段]`);
     this.decoder = new LineDecoder();

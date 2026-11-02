@@ -8,6 +8,7 @@ import { SerialPortMock } from "serialport";
 import { Capture } from "../src/core/capture";
 import { SerialTransport, type Transport } from "../src/core/transport";
 import { Journal, readSession } from "../src/core/journal";
+import { mergeSnapshot } from "../src/snapshot";
 const config = {
   target: "demo",
   source: "synthetic" as const,
@@ -46,6 +47,76 @@ const until = async (f: () => boolean) => {
     await new Promise((r) => setTimeout(r, 5));
   assert.ok(f(), "condition timed out");
 };
+test("incremental snapshots preserve partial lines, eviction, mode changes and reconnects", async (t) => {
+  const { c, wire } = await setup(t);
+  c.setViewLimits({ maxRows: 1000, maxChars: 1048576 });
+  await c.connect({ ...config, saveSession: false, baudRate: 123456 });
+  let current = c.snapshot();
+  const idle = c.snapshot("text", current.viewUpdate!.cursor);
+  assert.equal(idle.rows.length, 0);
+  assert.equal(mergeSnapshot(current, idle).rows, current.rows);
+  for (const text of ["prompt> ", "OK\r", "\n", "x\n".repeat(1200), "last"]) {
+    const before = c.snapshot().rxBytes;
+    wire.emit("bytes", Buffer.from(text));
+    await until(() => c.snapshot().rxBytes > before);
+    // RX persistence is async; wait for the view as well.
+    await new Promise((r) => setImmediate(r));
+    const patch = c.snapshot("text", current.viewUpdate!.cursor);
+    current = mergeSnapshot(current, patch);
+    assert.deepEqual(current.rows, c.snapshot().rows);
+  }
+  const hex = c.snapshot("hex", current.viewUpdate!.cursor);
+  assert.equal(hex.viewUpdate!.reset, true);
+  assert.deepEqual(mergeSnapshot(current, hex).rows, c.snapshot("hex").rows);
+  current = mergeSnapshot(hex, c.snapshot("text", hex.viewUpdate!.cursor));
+  await c.stop();
+  current = mergeSnapshot(
+    current,
+    c.snapshot("text", current.viewUpdate!.cursor),
+  );
+  assert.deepEqual(current.rows, c.snapshot().rows);
+  await c.connect({ ...config, saveSession: false });
+  const reset = c.snapshot("text", current.viewUpdate!.cursor);
+  assert.equal(reset.viewUpdate!.reset, true);
+  assert.deepEqual(mergeSnapshot(current, reset).rows, c.snapshot().rows);
+});
+
+test("50k retained rows send only the changed tail; shrinking the cache stays consistent", async (t) => {
+  const { c, wire } = await setup(t);
+  c.setViewLimits({ maxRows: 50000, maxChars: 16 * 1048576 });
+  await c.connect({ ...config, saveSession: false });
+  wire.emit("bytes", Buffer.from("load\n".repeat(51000)));
+  await new Promise((r) => setImmediate(r));
+  const full = c.snapshot();
+  assert.equal(full.rows.length, 50000);
+  wire.emit("bytes", Buffer.from("tail"));
+  await new Promise((r) => setImmediate(r));
+  const patch = c.snapshot("text", full.viewUpdate!.cursor);
+  assert.ok(patch.rows.length <= 2);
+  const merged = mergeSnapshot(full, patch);
+  assert.deepEqual(merged.rows, c.snapshot().rows);
+  assert.ok(JSON.stringify(patch).length < 2048);
+  c.setViewLimits({ maxRows: 1000, maxChars: 1048576 });
+  const smaller = mergeSnapshot(
+    merged,
+    c.snapshot("text", merged.viewUpdate!.cursor),
+  );
+  assert.equal(smaller.rows.length, 1000);
+  assert.deepEqual(smaller.rows, c.snapshot().rows);
+  assert.equal(
+    c.snapshot("text", { ...smaller.viewUpdate!.cursor, lastId: NaN })
+      .viewUpdate!.reset,
+    true,
+  );
+});
+
+test("invalid baud rates are rejected before touching the transport", async (t) => {
+  const { c, wire } = await setup(t);
+  for (const baudRate of [0, 49, 4000001, 115200.5, Infinity, NaN])
+    await assert.rejects(c.connect({ ...config, baudRate }), /无效串口参数/);
+  assert.equal(wire.opened, false);
+  assert.equal(c.snapshot().state, "idle");
+});
 test("receive split text but persist exact chunks and independent sending", async (t) => {
   const { c, wire } = await setup(t);
   await c.connect(config);
@@ -132,13 +203,14 @@ test("serial adapter uses actual SerialPort stream and never auto-opens", async 
   SerialPortMock.binding.createPort(path, { echo: true, record: true });
   let port!: SerialPortMock;
   const transport = new SerialTransport(
-    { target: path, source: "serial", baudRate: 115200 },
+    { target: path, source: "serial", baudRate: 123456 },
     (options) => (port = new SerialPortMock(options)),
   );
   const rx: Buffer[] = [];
   transport.on("bytes", (b) => rx.push(b));
   transport.on("fault", () => {});
   assert.equal(port.isOpen, false);
+  assert.equal(port.settings.baudRate, 123456);
   await transport.open();
   await transport.write(Buffer.from([0, 255, 13, 10]));
   await until(() => Buffer.concat(rx).length === 4);

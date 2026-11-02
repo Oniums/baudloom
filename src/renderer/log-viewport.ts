@@ -9,6 +9,12 @@ export class LogViewport {
   private empty = "";
   private frame = 0;
   private signature = "";
+  private timeFormat = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
   private top = document.createElement("div");
   private body = document.createElement("div");
   private bottom = document.createElement("div");
@@ -106,9 +112,7 @@ export class LogViewport {
       const time = document.createElement("span");
       time.className = "time";
       time.textContent =
-        new Date(row.at).toLocaleTimeString("zh-CN", { hour12: false }) +
-        "." +
-        row.at.slice(20, 23);
+        this.timeFormat.format(new Date(row.at)) + "." + row.at.slice(20, 23);
       time.title = row.at;
       const dir = document.createElement("span");
       dir.className = "direction";

@@ -5,7 +5,7 @@
 - `src/renderer`：纯 DOM 界面、发送工具、虚拟日志列表和布局设置。
 - `src/desktop`：Electron 主进程、preload、存储路径、文件对话框和生命周期。
 - `src/core`：独立 utility process 中的串口、发送调度、缓存、记录和历史读取。
-- `src/shared.ts`、`src/send-tools.ts`、`src/view-settings.ts`：接口、共用字节规则与缓存预算。
+- `src/shared.ts`、`src/snapshot.ts`、`src/baud-rate.ts`、`src/send-tools.ts`、`src/view-settings.ts`：接口、共用字节规则与缓存预算。
 - `tests`：核心行为测试及 Electron 桌面测试。
 - `assets/brand`：原创图标源稿及生成结果。
 
@@ -20,6 +20,7 @@ npm run format:check
 npm run typecheck
 npm test
 npm run test:desktop
+npm run benchmark
 npm run package:win
 ```
 
@@ -28,6 +29,18 @@ Windows 单文件输出为 `artifacts/Baudloom-<版本>-win-x64.exe`。`artifact
 打包后测试用 `BAUDLOOM_EXECUTABLE` 指定应用可执行文件。Linux 无桌面环境需要 Xvfb 和 Electron 系统依赖。root 测试环境的 `--no-sandbox` 仅由测试启动器添加，产品入口不添加。
 
 `package-lock.json` 固定依赖。GitHub Actions 在 Windows 上执行格式、类型、核心、桌面和打包后验证；每次运行结果见 Actions，不能用配置存在推断运行通过。
+
+## 启动与刷新
+
+0.1.3 使用 ASAR 合并应用文件，`.node` 原生绑定保留为实际文件；Electron 只保留 `zh-CN` 和 `en-US` 语言资源。便携包启用 `useZip`，使用 NSIS 内置 zlib 直接解包，避免先提取 7z、再解压、再复制的路径；每次启动分配独立 TEMP 目录，退出清理。本方案仍需每次解包，包体积比 0.1.2 大。参考 [Electron ASAR](https://www.electronjs.org/docs/latest/tutorial/asar-archives) 与 [portable 配置](https://www.electron.build/docs/api/app-builder-lib.interface.portableoptions/)。
+
+窗口创建不等待偏好文件和采集进程启动；IPC 请求仍等待采集初始化，避免向未创建的进程发送。初始视图、设备枚举和目录显示分别加载，枚举慢时不阻挡首个视图。
+
+`snapshot` 不带游标时返回完整视图；界面轮询携带会话、格式、最后行号和修订号，返回新增/变化尾部以及首行号、总缓存行数。未终止片段使用原行号替换，缓存淘汰同步删除头部；格式切换或会话变化自动返回全量。游标只影响显示传输，不影响原始事件。界面丢弃过期格式/视图请求，空闲时复用行数组。连接状态轮询间隔为上次请求完成后 100 ms，未连接或后台为 1000 ms，不并发积压。
+
+显示和原始缓存使用带游标的队列，移除头部时释放引用，定期压缩，避免每条记录调用数组头部删除。发送上下文未变化时跳过校验预览重算，日志时间格式器复用。
+
+`npm run benchmark` 使用合成数据报告核心处理时间、50000 行缓存下完整/空闲/新增一行快照的 JSON 字节量。它不打开硬件或保存会话，JSON 字节量用于比较数据规模，不等于 Electron IPC 的精确编码大小。
 
 ## 数据与存储语义
 
