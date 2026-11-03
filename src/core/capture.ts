@@ -1,3 +1,6 @@
+import { serialSettings, serialSummary } from "../serial-settings";
+import { readTextLog } from "./text-import";
+import { extname } from "node:path";
 import { validBaudRate } from "../baud-rate";
 import {
   DEFAULT_VIEW_LIMITS,
@@ -15,7 +18,9 @@ import type {
   StoredEvent,
 } from "../shared";
 import { MemoryJournal, type EventJournal } from "./memory-journal";
-import { Journal, readSession } from "./journal";
+import { exportText, validateExport } from "./export";
+import type { ExportRequest } from "../shared";
+import { Journal, readSession, sessionParts } from "./journal";
 import { makeTransport, type Transport } from "./transport";
 import { encodeSend } from "../send-tools";
 import { View } from "./view";
@@ -51,6 +56,9 @@ export class Capture {
   private reading = false;
   private offlineFile = "";
   private offlineEvents = 0;
+  private offlineSegments = 0;
+  private fileKind: "session" | "text" = "session";
+  private exportController?: AbortController;
   constructor(
     private directory: string,
     private factory = makeTransport,
@@ -79,6 +87,11 @@ export class Capture {
       return Promise.reject(Error("无效串口参数"));
     if (["connected", "connecting", "stopping"].includes(this.state))
       return Promise.reject(Error("请先停止当前连接"));
+    try {
+      config = { ...config, serial: serialSettings(config.serial) };
+    } catch (e) {
+      return Promise.reject(e);
+    }
     this.state = "connecting";
     return this.enqueue(async () => {
       if (this.closeTask) await this.closeTask;
@@ -101,6 +114,7 @@ export class Capture {
       };
       this.warning = null;
       this.offlineFile = "";
+      this.fileKind = "session";
       this.view = new View(this.viewLimits);
       this.rxBytes = 0;
       this.txBytes = 0;
@@ -126,7 +140,7 @@ export class Capture {
         if (this.state === "connecting") this.state = "connected";
         await this.record({
           kind: "mark",
-          message: `${config.source === "synthetic" ? "合成设备" : "串口"} ${config.target} · ${config.baudRate} · 8N1`,
+          message: `${config.source === "synthetic" ? "合成设备" : "串口"} ${config.target} · ${config.baudRate} · ${serialSummary(config.serial!)}`,
         });
       } catch (error) {
         this.fault(error);
@@ -367,6 +381,31 @@ export class Capture {
     this.reading = true;
     try {
       await this.stop();
+      if ([".txt", ".log"].includes(extname(file).toLowerCase())) {
+        const result = await readTextLog(file, this.viewLimits);
+        this.view = result.view;
+        this.connectionId = "";
+        this.journal = undefined;
+        this.transport = undefined;
+        this.closeTask = undefined;
+        this.config = undefined;
+        this.backfilledEvents =
+          this.droppedEvents =
+          this.rxBytes =
+          this.txBytes =
+            0;
+        this.backfillActive = false;
+        this.offlineFile = file;
+        this.offlineSegments = this.offlineEvents = 0;
+        this.fileKind = "text";
+        this.state = "offline";
+        this.error = null;
+        this.warning =
+          this.view.total > this.view.textSnapshot().rows.length
+            ? "文本超出视图预算，仅保留尾部内容；原文件未修改。"
+            : null;
+        return this.snapshot();
+      }
       const result = await readSession(
         file,
         this.viewLimits.maxRows,
@@ -404,7 +443,9 @@ export class Capture {
             baudRate: first.baudRate,
           }
         : undefined;
-      this.offlineFile = file;
+      this.offlineFile = result.file;
+      this.fileKind = "session";
+      this.offlineSegments = result.segments;
       this.offlineEvents = result.total;
       this.state = "offline";
       this.error = null;
@@ -420,6 +461,42 @@ export class Capture {
       return this.snapshot();
     } finally {
       this.reading = false;
+    }
+  }
+  cancelExport() {
+    this.exportController?.abort(Error("导出已取消"));
+  }
+  async exportLog(file: string, request: ExportRequest) {
+    validateExport(request);
+    if (this.exportController) throw Error("已有导出正在进行");
+    if (request.sessionId !== (this.connectionId || this.offlineFile))
+      throw Error("会话已变化，请重新选择导出范围");
+    const controller = new AbortController();
+    this.exportController = controller;
+    const journal = this.journal;
+    const offline = this.offlineFile;
+    const live = ["connecting", "connected", "stopping"].includes(this.state);
+    try {
+      if (request.scope === "session") {
+        if (this.fileKind === "text")
+          throw Error("普通文本请导出当前缓存或筛选结果，原文件保持不变");
+        const parts =
+          journal instanceof Journal
+            ? await journal.checkpoint()
+            : offline
+              ? await sessionParts(offline)
+              : [];
+        return await exportText(
+          file,
+          request,
+          { parts, live },
+          controller.signal,
+        );
+      }
+      const rows = this.view.snapshot(request.mode).rows;
+      return await exportText(file, request, { rows }, controller.signal);
+    } finally {
+      this.exportController = undefined;
     }
   }
   snapshot(mode: "text" | "hex" = "text", cursor?: ViewCursor): Snapshot {
@@ -441,11 +518,23 @@ export class Capture {
       !reset && cursor!.revision === this.view.revision,
     );
     return {
+      fileKind: this.fileKind,
+      serial: this.config?.serial,
       state: this.state,
       schedule: { ...this.schedule },
       target: this.config?.target ?? "",
       source: this.config?.source ?? "synthetic",
       sessionFile: this.journal?.file ?? this.offlineFile,
+      currentSessionFile:
+        this.journal instanceof Journal
+          ? this.journal.currentFile
+          : this.offlineFile,
+      segmentCount:
+        this.journal instanceof Journal
+          ? this.journal.segmentCount
+          : this.offlineFile
+            ? this.offlineSegments
+            : 0,
       sessionId: this.connectionId || this.offlineFile,
       viewLimits: { ...this.viewLimits },
       bufferedEvents:

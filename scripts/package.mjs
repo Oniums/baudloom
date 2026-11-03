@@ -42,7 +42,7 @@ if (platform === "win32") {
       directories: { output: "artifacts" },
       win: { signAndEditExecutable: false, icon: "assets/brand/baudloom.ico" },
       portable: {
-        artifactName: "Baudloom-${version}-win-x64.exe",
+        artifactName: "Baudloom.exe",
         requestExecutionLevel: "user",
         // Direct zlib extraction avoids the intermediate 7z extraction/copy pass.
         useZip: true,

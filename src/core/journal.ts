@@ -1,16 +1,29 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open, mkdir, type FileHandle } from "node:fs/promises";
+import { open, mkdir, readdir, stat, type FileHandle } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
+import { Deque } from "./deque";
 import type { ConnectionConfig, EventInput, StoredEvent } from "../shared";
 
 const MAX_LINE = 128 * 1024;
 const MAX_FILE = 64 * 1024 * 1024;
 const digest = (event: StoredEvent) =>
   createHash("sha256").update(JSON.stringify(event)).digest("hex");
+export interface SessionPart {
+  file: string;
+  bytes: number;
+  index: number;
+}
 export class Journal {
   readonly sessionId = randomUUID();
   file = "";
+  private parts: SessionPart[] = [];
+  get segmentCount() {
+    return this.parts.length;
+  }
+  get currentFile() {
+    return this.parts.at(-1)?.file ?? this.file;
+  }
   private handle!: FileHandle;
   private seq = 0;
   private tail: Promise<void> = Promise.resolve();
@@ -40,6 +53,7 @@ export class Journal {
       `${new Date().toISOString().replace(/[:.]/g, "-")}-${journal.sessionId}.baudloom.jsonl`,
     );
     journal.handle = await open(journal.file, "wx", 0o600);
+    journal.parts.push({ file: journal.file, bytes: 0, index: 1 });
     try {
       await journal.append({ kind: "start", message: "capture started" });
       await journal.sync();
@@ -103,16 +117,26 @@ export class Journal {
           this.limits.maxQueueBytes
     )
       return Promise.reject(Error("记录队列已满，采集必须停止"));
-    if (
-      this.writtenBytes + this.pendingBytes + buffer.length >
-      this.limits.maxBytes - (input.kind === "stop" ? 0 : 512)
-    )
-      return Promise.reject(Error("会话容量已达上限，采集必须停止"));
+    if (buffer.length > this.limits.maxBytes)
+      return Promise.reject(Error("单条记录超过分段容量"));
     this.seq++;
     this.pendingBytes += buffer.length;
     if (original) this.backfillPending += buffer.length;
     const write = this.tail.then(async () => {
       if (this.failure) throw this.failure;
+      if (this.parts.at(-1)!.bytes + buffer.length > this.limits.maxBytes) {
+        // Rotation stays in the same write queue; event sequence and partial RX continue.
+        await this.handle.sync();
+        await this.handle.close();
+        const index = this.parts.length + 1;
+        if (index > 999999) throw Error("会话分段数量已达上限");
+        const file = this.file.replace(
+          /\.baudloom\.jsonl$/,
+          `.part${String(index).padStart(6, "0")}.baudloom.jsonl`,
+        );
+        this.handle = await open(file, "wx", 0o600);
+        this.parts.push({ file, bytes: 0, index });
+      }
       let offset = 0;
       while (offset < buffer.length) {
         const result = await this.handle.write(
@@ -124,6 +148,7 @@ export class Journal {
         offset += result.bytesWritten;
       }
       this.writtenBytes += buffer.length;
+      this.parts.at(-1)!.bytes += buffer.length;
     });
     const result = write
       .then(() => event)
@@ -156,6 +181,23 @@ export class Journal {
       this.fail(error);
     });
     return operation;
+  }
+  async checkpoint(): Promise<SessionPart[]> {
+    if (this.closed) {
+      await this.closing;
+      if (this.failure) throw this.failure;
+      return this.parts.map((part) => ({ ...part }));
+    }
+    let result: SessionPart[] = [];
+    const operation = this.tail.then(async () => {
+      if (this.failure) throw this.failure;
+      await this.handle.sync();
+      this.syncedAt = new Date().toISOString();
+      result = this.parts.map((part) => ({ ...part }));
+    });
+    this.tail = operation.catch((error) => this.fail(error));
+    await operation;
+    return result;
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -206,78 +248,147 @@ function isEvent(e: any): e is StoredEvent {
     (e.message === undefined || typeof e.message === "string")
   );
 }
+/** Discover only siblings belonging to the selected recording, starting at part one. */
+export async function sessionParts(file: string): Promise<SessionPart[]> {
+  const dir = dirname(file);
+  const name = basename(file);
+  const stem = name.replace(/(?:\.part\d{6})?\.baudloom\.jsonl$/, "");
+  if (stem === name)
+    return [{ file, bytes: (await stat(file)).size, index: 1 }];
+  const first = `${stem}.baudloom.jsonl`;
+  const names = await readdir(dir);
+  const selected = names
+    .flatMap((name) => {
+      if (name === first) return [{ name, index: 1 }];
+      if (!name.startsWith(stem + ".part")) return [];
+      const suffix = name
+        .slice(stem.length)
+        .match(/^\.part(\d{6})\.baudloom\.jsonl$/);
+      return suffix ? [{ name, index: Number(suffix[1]) }] : [];
+    })
+    .sort((a, b) => a.index - b.index);
+  if (!selected.length) throw Error("未找到会话文件");
+  return Promise.all(
+    selected.map(async (part) => ({
+      file: join(dir, part.name),
+      index: part.index,
+      bytes: (await stat(join(dir, part.name))).size,
+    })),
+  );
+}
+
+export async function scanSession(
+  parts: SessionPart[],
+  consume: (event: StoredEvent, bytes: number) => void | Promise<void>,
+  options: { allowOpenEnd?: boolean; signal?: AbortSignal } = {},
+): Promise<{
+  total: number;
+  complete: boolean;
+  warning: string | null;
+  segments: number;
+}> {
+  let total = 0,
+    sessionId = "",
+    lastKind = "",
+    segments = 0;
+  let warning: string | null = null;
+  outer: for (const part of parts) {
+    options.signal?.throwIfAborted();
+    if (part.index !== segments + 1) {
+      warning = `缺少或重复第 ${segments + 1} 个分段，仅保留已验证前缀`;
+      break;
+    }
+    if (part.bytes > MAX_FILE) {
+      warning = "单个文件超过 64 MiB 读取上限";
+      break;
+    }
+    if (!part.bytes) {
+      warning = `第 ${part.index} 个分段为空`;
+      break;
+    }
+    let pending = Buffer.alloc(0);
+    let read = 0;
+    const stream = createReadStream(part.file, {
+      highWaterMark: 64 * 1024,
+      end: part.bytes - 1,
+      signal: options.signal,
+    });
+    for await (const chunk of stream) {
+      const buffer = chunk as Buffer;
+      read += buffer.length;
+      pending = Buffer.concat([pending, buffer]);
+      let newline: number;
+      while ((newline = pending.indexOf(10)) >= 0) {
+        options.signal?.throwIfAborted();
+        if (newline > MAX_LINE) {
+          warning = "记录行过长，已停止验证";
+          break outer;
+        }
+        const line = pending.subarray(0, newline);
+        pending = pending.subarray(newline + 1);
+        let event: StoredEvent;
+        try {
+          const envelope = JSON.parse(line.toString("utf8"));
+          event = envelope.event;
+          if (!isEvent(event) || envelope.hash !== digest(event))
+            throw Error("记录校验失败");
+          if (
+            event.seq !== total + 1 ||
+            (total === 0
+              ? event.kind !== "start"
+              : event.sessionId !== sessionId ||
+                event.kind === "start" ||
+                lastKind === "stop")
+          )
+            throw Error("记录顺序/会话校验失败");
+        } catch (error) {
+          warning = `第 ${total + 1} 条${error instanceof Error ? error.message : "记录校验失败"}，仅显示已验证前缀`;
+          break outer;
+        }
+        sessionId = event.sessionId;
+        lastKind = event.kind;
+        total++;
+        // Consumer failures (disk full, cancellation) must propagate, not become corruption warnings.
+        await consume(event, line.length);
+      }
+      if (pending.length > MAX_LINE) {
+        warning = "记录行过长，已停止验证";
+        break outer;
+      }
+    }
+    if (read !== part.bytes || pending.length) {
+      warning = "尾部记录截断，仅显示完整前缀";
+      break;
+    }
+    segments++;
+  }
+  if (!warning && lastKind !== "stop" && !options.allowOpenEnd)
+    warning = "会话未正常收尾，可能存在未保存尾部";
+  return {
+    total,
+    complete: !warning && lastKind === "stop",
+    warning,
+    segments,
+  };
+}
+
 export async function readSession(
   file: string,
   limit = 2000,
   byteLimit = 2 * 1024 * 1024,
-): Promise<{
-  events: StoredEvent[];
-  total: number;
-  complete: boolean;
-  warning: string | null;
-}> {
-  const events: StoredEvent[] = [];
-  let pending = Buffer.alloc(0),
-    total = 0,
-    bytes = 0,
-    retained = 0,
-    sessionId = "",
-    lastKind = "",
-    warning: string | null = null;
-  const stream = createReadStream(file, { highWaterMark: 64 * 1024 });
-  outer: for await (const chunk of stream) {
-    const buffer = chunk as Buffer;
-    bytes += buffer.length;
-    if (bytes > MAX_FILE) {
-      warning = "文件超过 64 MiB 读取上限";
-      break;
-    }
-    pending = Buffer.concat([pending, buffer]);
-    let newline: number;
-    while ((newline = pending.indexOf(10)) >= 0) {
-      if (newline > MAX_LINE) {
-        warning = "记录行过长，已停止验证";
-        break outer;
-      }
-      const line = pending.subarray(0, newline);
-      pending = pending.subarray(newline + 1);
-      try {
-        const envelope = JSON.parse(line.toString("utf8"));
-        const e = envelope.event;
-        if (!isEvent(e) || envelope.hash !== digest(e))
-          throw Error("记录校验失败");
-        if (
-          e.seq !== total + 1 ||
-          (total === 0
-            ? e.kind !== "start"
-            : e.sessionId !== sessionId ||
-              e.kind === "start" ||
-              lastKind === "stop")
-        )
-          throw Error("记录顺序/会话校验失败");
-        sessionId = e.sessionId;
-        lastKind = e.kind;
-        total++;
-        events.push(e);
-        retained += line.length;
-        while (events.length > limit || retained > byteLimit) {
-          retained -=
-            Buffer.byteLength(JSON.stringify({ event: events[0], hash: "" })) +
-            64;
-          events.shift();
-        }
-      } catch (error) {
-        warning = `第 ${total + 1} 条${error instanceof Error ? error.message : "记录校验失败"}，仅显示已验证前缀`;
-        break outer;
-      }
-    }
-    if (pending.length > MAX_LINE) {
-      warning = "记录行过长，已停止验证";
-      break;
-    }
-  }
-  if (!warning && pending.length) warning = "尾部记录截断，仅显示完整前缀";
-  if (!warning && lastKind !== "stop")
-    warning = "会话未正常收尾，可能存在未保存尾部";
-  return { events, total, complete: !warning && lastKind === "stop", warning };
+) {
+  const events = new Deque<{ event: StoredEvent; bytes: number }>();
+  let retained = 0;
+  const parts = await sessionParts(file);
+  const result = await scanSession(parts, (event, bytes) => {
+    events.push({ event, bytes });
+    retained += bytes;
+    while (events.length > limit || retained > byteLimit)
+      retained -= events.shift()!.bytes;
+  });
+  return {
+    ...result,
+    events: events.slice().map((item) => item.event),
+    file: parts[0].file,
+  };
 }

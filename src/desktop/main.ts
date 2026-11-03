@@ -54,10 +54,13 @@ async function request(method: string, ...args: unknown[]): Promise<any> {
   if (pending.size >= 32) return Promise.reject(Error("操作过多，请稍后重试"));
   return new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(Error("采集进程未及时响应，请检查状态后停止采集"));
-    }, 15000);
+    const timer = setTimeout(
+      () => {
+        pending.delete(id);
+        reject(Error("采集进程未及时响应，请检查状态后停止采集"));
+      },
+      ["open", "export"].includes(method) ? 30 * 60 * 1000 : 15000,
+    );
     pending.set(id, { resolve, reject, timer });
     try {
       core.postMessage({ id, method, args });
@@ -117,7 +120,7 @@ app
       title: "Baudloom",
       icon: join(__dirname, "baudloom.png"),
       show: false,
-      backgroundColor: "#f7f8fa",
+      backgroundColor: "#fafafa",
       webPreferences: {
         preload: join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -171,15 +174,38 @@ app
       await writeFile(prefs, JSON.stringify({ directory }), { mode: 0o600 });
       return directory;
     });
+    let exporting = false;
+    handle("cancel-export", () => request("cancelExport"));
+    handle("export-log", async (options) => {
+      if (exporting) throw Error("已有导出正在进行");
+      exporting = true;
+      try {
+        const chosen = await dialog.showSaveDialog(window, {
+          title: "导出日志",
+          defaultPath: join(
+            directory,
+            `Baudloom-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+          ),
+          filters: [{ name: "文本日志", extensions: ["txt", "log"] }],
+        });
+        return chosen.canceled || !chosen.filePath
+          ? null
+          : await request("export", chosen.filePath, options);
+      } finally {
+        exporting = false;
+      }
+    });
     handle("open-session", async () => {
       const state = await request("snapshot");
       if (["connecting", "connected", "stopping"].includes(state.state))
         throw Error("请先断开设备");
       const result = await dialog.showOpenDialog(window, {
-        title: "打开 Baudloom 会话",
+        title: "打开会话或文本日志",
         properties: ["openFile"],
         defaultPath: directory,
-        filters: [{ name: "Baudloom 记录", extensions: ["jsonl"] }],
+        filters: [
+          { name: "会话与文本日志", extensions: ["jsonl", "txt", "log"] },
+        ],
       });
       return result.canceled ? null : request("open", result.filePaths[0]);
     });
@@ -197,6 +223,7 @@ app
       event.preventDefault();
       if (closing) return;
       closing = true;
+      void request("cancelExport").catch(console.error);
       void request("stopSchedule").catch(console.error);
       void (async () => {
         try {

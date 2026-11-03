@@ -71,6 +71,7 @@ export class MemoryJournal implements EventJournal {
       target: this.config.target,
       source: this.config.source,
       baudRate: this.config.baudRate,
+      serial: this.config.serial,
     };
     const bytes = Buffer.byteLength(JSON.stringify(event));
     this.events.push({ event, bytes });

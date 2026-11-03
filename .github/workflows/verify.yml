@@ -29,9 +29,11 @@ jobs:
         run: |
           $env:BAUDLOOM_EXECUTABLE = Join-Path $PWD 'artifacts/Baudloom-win32-x64/Baudloom.exe'
           node tests/desktop-smoke.cjs
+          node tests/workflow-desktop.cjs
+          node tests/two-pane-desktop.cjs
       - uses: actions/upload-artifact@v7
         with:
           name: baudloom-windows-x64
-          path: artifacts/Baudloom-*-win-x64.exe
+          path: artifacts/Baudloom.exe
           if-no-files-found: error
           retention-days: 7

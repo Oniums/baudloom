@@ -1,8 +1,26 @@
+import type { SerialSettings } from "./serial-settings";
 import type { ViewLimits } from "./view-settings";
+import type { LogFilter } from "./log-search";
+export interface ExportRequest extends LogFilter {
+  scope: "cache" | "filtered" | "selection" | "session";
+  sessionId: string;
+  mode: "text" | "hex";
+  afterRowId: number;
+  timestamps: boolean;
+  direction: boolean;
+  selection?: string;
+}
+export interface ExportResult {
+  file: string;
+  rows: number;
+  bytes: number;
+  warning: string | null;
+}
 export type Source = "serial" | "synthetic";
 export type EventKind =
   "start" | "rx" | "tx-request" | "tx-result" | "mark" | "error" | "stop";
 export interface ConnectionConfig {
+  serial?: SerialSettings;
   saveSession?: boolean;
   target: string;
   baudRate: number;
@@ -16,6 +34,7 @@ export interface EventInput {
   outcome?: "host-write-completed" | "uncertain";
 }
 export interface StoredEvent extends EventInput {
+  serial?: SerialSettings;
   v: 1;
   seq: number;
   sessionId: string;
@@ -26,6 +45,7 @@ export interface StoredEvent extends EventInput {
   baudRate: number;
 }
 export interface LogRow {
+  mono?: string;
   id: number;
   at: string;
   dir: string;
@@ -38,6 +58,8 @@ export interface ViewCursor {
   revision: number;
 }
 export interface Snapshot {
+  fileKind?: "session" | "text";
+  serial?: SerialSettings;
   viewUpdate?: {
     cursor: ViewCursor;
     count: number;
@@ -55,6 +77,8 @@ export interface Snapshot {
   target: string;
   source: Source;
   sessionFile: string;
+  currentSessionFile: string;
+  segmentCount: number;
   viewLimits: ViewLimits;
   bufferedEvents: number;
   droppedEvents: number;
@@ -125,4 +149,6 @@ export interface Api {
   directory(): Promise<string>;
   chooseDirectory(): Promise<string | null>;
   openSession(): Promise<Snapshot | null>;
+  exportLog(request: ExportRequest): Promise<ExportResult | null>;
+  cancelExport(): Promise<void>;
 }

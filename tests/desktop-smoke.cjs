@@ -1,8 +1,18 @@
+const { controls } = require("./desktop-controls.cjs");
 const { _electron: electron, expect } = require("@playwright/test");
 const assert = require("node:assert/strict");
 const { mkdtemp, readFile, rm, mkdir, readdir } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
+async function sendOption(page, fn) {
+  await controls(page).locator("#send-options").click();
+  try {
+    await fn();
+  } finally {
+    if (await page.locator("#send-options-dialog").isVisible())
+      await page.locator("#send-options-close").click();
+  }
+}
 (async () => {
   const root = await mkdtemp(path.join(tmpdir(), "baudloom-desktop-"));
   let app;
@@ -21,8 +31,8 @@ const path = require("node:path");
     page.on("pageerror", (e) => errors.push(e.message));
     await page.getByRole("button", { name: "连接", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => typeof window.require), "undefined");
-    assert.equal(await page.locator("#send").isDisabled(), true);
-    assert.equal(await page.locator("#command").isEnabled(), true);
+    assert.equal(await controls(page).locator("#send").isDisabled(), true);
+    assert.equal(await controls(page).locator("#command").isEnabled(), true);
     await app.evaluate(({ ipcMain }) => {
       ipcMain.removeHandler("ports");
       ipcMain.handle("ports", () => [
@@ -41,63 +51,79 @@ const path = require("node:path");
         },
       ]);
     });
-    await page.locator("#refresh").click();
-    await page.locator("#target").selectOption("COM12");
+    await controls(page).locator("#refresh").click();
+    await controls(page).locator("#target").selectOption("COM12");
     assert.equal(
-      await page.locator("#target option:checked").textContent(),
+      await controls(page).locator("#target option:checked").textContent(),
       "WCH USB-SERIAL Ch A (COM12)",
     );
     assert.equal(
-      await page.locator("#send-target").textContent(),
+      await controls(page).locator("#send-target").textContent(),
       "WCH USB-SERIAL Ch A (COM12)",
     );
-    await page.locator("#command").fill("COM12 draft");
-    await page.locator("#target").selectOption("COM5");
-    assert.equal(await page.locator("#command").inputValue(), "");
-    await page.locator("#target").selectOption("COM12");
-    assert.equal(await page.locator("#command").inputValue(), "COM12 draft");
+    await controls(page).locator("#command").fill("COM12 draft");
+    await controls(page).locator("#target").selectOption("COM5");
+    assert.equal(await controls(page).locator("#command").inputValue(), "");
+    await controls(page).locator("#target").selectOption("COM12");
+    assert.equal(
+      await controls(page).locator("#command").inputValue(),
+      "COM12 draft",
+    );
     await mkdir(".local/screenshots", { recursive: true });
     await page.screenshot({
       path: ".local/screenshots/desktop-device-name.png",
     });
-    await page.locator("#target").selectOption("COM99");
-    assert.equal(await page.locator("#device-name").isVisible(), true);
+    await controls(page).locator("#target").selectOption("COM99");
+    assert.equal(
+      await controls(page).locator("#device-name").isVisible(),
+      true,
+    );
     // The splitter's ResizeObserver clamps the saved width after native window resize.
     await expect
       .poll(() =>
         page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       )
       .toBe(true);
-    await page.locator("#target").selectOption("demo");
-    await page.locator("#command").fill("123");
-    await page.locator("#tx-format").selectOption("hex");
-    assert.equal(await page.locator("#command").inputValue(), "31 32 33");
-    await page.locator("#tx-format").selectOption("text");
-    assert.equal(await page.locator("#command").inputValue(), "123");
+    await controls(page).locator("#target").selectOption("demo");
+    await controls(page).locator("#command").fill("123");
+    await controls(page).locator("#tx-format").selectOption("hex");
+    assert.equal(
+      await controls(page).locator("#command").inputValue(),
+      "31 32 33",
+    );
+    await controls(page).locator("#tx-format").selectOption("text");
+    assert.equal(await controls(page).locator("#command").inputValue(), "123");
     assert.equal(await page.title(), "Baudloom");
     assert.ok(
-      !(await page.locator(".titlebar").textContent()).includes("预览"),
+      !(await controls(page).locator(".titlebar").textContent()).includes(
+        "预览",
+      ),
     );
-    assert.equal(await page.locator("#save-session").isChecked(), false);
-    assert.ok((await page.locator("#baud-presets option").count()) >= 30);
+    assert.equal(
+      await controls(page).locator("#save-session").isChecked(),
+      false,
+    );
+    assert.ok(
+      (await controls(page).locator("#baud-presets option").count()) >= 30,
+    );
     for (const value of ["", "1e6", "115200.5", "4000001"]) {
-      await page.locator("#baud").fill(value);
-      await page.locator("#connect").click();
-      await expect(page.locator("#error")).toContainText("波特率");
+      await controls(page).locator("#baud").fill(value);
+      await controls(page).locator("#connect").click();
+      await expect(controls(page).locator("#error")).toContainText("波特率");
       assert.equal(
         (await page.evaluate(() => window.baudloom.snapshot())).state,
         "idle",
       );
     }
-    await page.locator("#baud-presets").selectOption("230400");
-    await expect(page.locator("#baud")).toHaveValue("230400");
-    await page.locator("#baud").fill("123456");
-    await page.locator("#connect").click();
+    await controls(page).locator("#baud-presets").selectOption("230400");
+    await expect(controls(page).locator("#baud")).toHaveValue("230400");
+    await controls(page).locator("#baud").fill("123456");
+    await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
-    assert.equal(await page.locator("#baud").isDisabled(), true);
-    await expect(page.locator("#log")).toContainText("123456");
-    await page.locator("#command").fill("unsaved-data");
-    await page.locator("#send").click();
+    assert.equal(await controls(page).locator("#baud").isDisabled(), true);
+    await expect(controls(page).locator("#log")).toContainText("123456");
+    await controls(page).locator("#command").fill("unsaved-data");
+    await controls(page).locator("#send").click();
     await expect
       .poll(
         async () =>
@@ -109,13 +135,18 @@ const path = require("node:path");
       "",
     );
     assert.ok(
-      (await page.locator("#record-state").textContent()).includes("未保存"),
+      (await controls(page).locator("#record-state").textContent()).includes(
+        "未保存",
+      ),
     );
-    assert.equal(await page.locator("#save-session").isEnabled(), true);
+    assert.equal(
+      await controls(page).locator("#save-session").isEnabled(),
+      true,
+    );
     assert.ok(!(await readdir(root)).includes("sessions"));
     const liveId = (await page.evaluate(() => window.baudloom.snapshot()))
       .sessionId;
-    await page.locator("#save-session").check();
+    await controls(page).locator("#save-session").check();
     await expect
       .poll(
         async () =>
@@ -123,7 +154,9 @@ const path = require("node:path");
             .backfilledEvents,
       )
       .toBeGreaterThan(0);
-    await expect(page.locator("#record-state")).toContainText("已补写");
+    await expect(controls(page).locator("#record-state")).toContainText(
+      "已补写",
+    );
     const savedLive = await page.evaluate(() => window.baudloom.snapshot());
     assert.equal(savedLive.sessionId, liveId);
     assert.equal(savedLive.state, "connected");
@@ -140,20 +173,50 @@ const path = require("node:path");
             .startsWith("unsaved-data"),
       ),
     );
-    await page.locator("#view-options").click();
-    await page.locator("#show-time").uncheck();
-    await page.locator("#show-direction").uncheck();
-    await expect(page.locator(".log-row .time").first()).toBeHidden();
-    await expect(page.locator(".log-row .direction").first()).toBeHidden();
-    await page.locator("#log-font-size").fill("18");
-    await page.locator("#log-font-size").press("Tab");
+    const exported = path.join(root, "live-export.txt");
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
+    }, exported);
+    await controls(page).locator("#export-log").click();
+    await controls(page).locator("#export-scope").selectOption("session");
+    await controls(page).locator("#export-time").uncheck();
+    await controls(page).locator("#export-direction").uncheck();
+    await controls(page).locator("#export-confirm").click();
+    await expect(controls(page).locator("#export-status")).toContainText(
+      "已导出",
+    );
+    assert.ok((await readFile(exported, "utf8")).includes("unsaved-data"));
+    await expect(controls(page).locator("#export-status")).toContainText(
+      "后续接收不包含",
+    );
+    await controls(page).locator("#export-close").click();
+    await app.evaluate(({ dialog }) => {
+      dialog.showSaveDialog = async () => ({ canceled: true });
+    });
+    await controls(page).locator("#export-log").click();
+    await controls(page).locator("#export-confirm").click();
+    await expect(controls(page).locator("#export-status")).toContainText(
+      "未导出文件",
+    );
+    await controls(page).locator("#export-close").click();
+    await controls(page).locator("#view-options").click();
+    await controls(page).locator("#show-time").uncheck();
+    await controls(page).locator("#show-direction").uncheck();
+    await expect(controls(page).locator(".log-row .time").first()).toBeHidden();
+    await expect(
+      controls(page).locator(".log-row .direction").first(),
+    ).toBeHidden();
+    await controls(page).locator("#log-font-size").fill("18");
+    await controls(page).locator("#log-font-size").press("Tab");
     assert.equal(
-      await page.locator("#log").evaluate((n) => getComputedStyle(n).fontSize),
+      await controls(page)
+        .locator("#log")
+        .evaluate((n) => getComputedStyle(n).fontSize),
       "18px",
     );
-    await page.locator("#view-max-rows").fill("20000");
-    await page.locator("#view-max-chars").selectOption("8");
-    await page.locator("#apply-view-limits").click();
+    await controls(page).locator("#view-max-rows").fill("20000");
+    await controls(page).locator("#view-max-chars").selectOption("8");
+    await controls(page).locator("#apply-view-limits").click();
     await expect
       .poll(
         async () =>
@@ -161,40 +224,46 @@ const path = require("node:path");
             .maxRows,
       )
       .toBe(20000);
-    await expect(page.locator("#view-memory")).toContainText("不是实测值");
-    await page.locator("#show-time").check();
-    await page.locator("#show-direction").check();
-    await page.locator("#log-font-size").fill("14");
-    await page.locator("#log-font-size").press("Tab");
-    await page.locator("#view-options").click();
-    const colHandle = await page.locator("#time-resizer").boundingBox();
-    const beforeCol = await page.locator(".time-column").boundingBox();
+    await expect(controls(page).locator("#view-memory")).toContainText(
+      "不是实测值",
+    );
+    await controls(page).locator("#show-time").check();
+    await controls(page).locator("#show-direction").check();
+    await controls(page).locator("#log-font-size").fill("14");
+    await controls(page).locator("#log-font-size").press("Tab");
+    await controls(page).locator("#view-options").click();
+    const colHandle = await controls(page)
+      .locator("#time-resizer")
+      .boundingBox();
+    const beforeCol = await controls(page)
+      .locator(".time-column")
+      .boundingBox();
     await page.mouse.move(colHandle.x + 5, colHandle.y + 10);
     await page.mouse.down();
     await page.mouse.move(colHandle.x + 45, colHandle.y + 10);
     await page.mouse.up();
     assert.ok(
-      (await page.locator(".time-column").boundingBox()).width >
+      (await controls(page).locator(".time-column").boundingBox()).width >
         beforeCol.width + 30,
     );
-    await page.locator("#time-resizer").press("Home");
-    await page.locator("#connect").click();
+    await controls(page).locator("#time-resizer").press("Home");
+    await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "连接", exact: true }).waitFor();
-    await page.locator("#save-session").check();
-    await page.locator("#command").fill("draft before connecting");
+    await controls(page).locator("#save-session").check();
+    await controls(page).locator("#command").fill("draft before connecting");
     const beforeShortcut = (
       await page.evaluate(() => window.baudloom.snapshot())
     ).txBytes;
-    await page.locator("#command").press("Control+Enter");
+    await controls(page).locator("#command").press("Control+Enter");
     assert.equal(
       (await page.evaluate(() => window.baudloom.snapshot())).txBytes,
       beforeShortcut,
     );
-    await page.locator("#target").selectOption("demo");
-    await page.locator("#connect").click();
+    await controls(page).locator("#target").selectOption("demo");
+    await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
     assert.equal(
-      await page.locator("#command").inputValue(),
+      await controls(page).locator("#command").inputValue(),
       "draft before connecting",
     );
     assert.equal(
@@ -204,38 +273,48 @@ const path = require("node:path");
     await page.waitForFunction(() =>
       document.querySelector("#log").textContent.includes("[demo] sample="),
     );
-    await page.locator("#command").fill("status");
-    await page.locator("#send").click();
+    await controls(page).locator("#command").fill("status");
+    await controls(page).locator("#send").click();
     await page.waitForFunction(() =>
       document.querySelector("#log").textContent.includes("主机写入完成"),
     );
     const file = (await page.evaluate(() => window.baudloom.snapshot()))
       .sessionFile;
     assert.ok((await readFile(file, "utf8")).includes("tx-request"));
-    assert.equal(await page.locator("#command").inputValue(), "status");
-    await page.locator("#clear-command").click();
-    assert.equal(await page.locator("#command").inputValue(), "");
+    assert.equal(
+      await controls(page).locator("#command").inputValue(),
+      "status",
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#clear-command").click(),
+    );
+    assert.equal(await controls(page).locator("#command").inputValue(), "");
     const txBeforeHistory = (
       await page.evaluate(() => window.baudloom.snapshot())
     ).txBytes;
-    await page.locator("#send-history").selectOption("0");
-    assert.equal(await page.locator("#command").inputValue(), "status");
+    await controls(page).locator("#send-history").selectOption("0");
+    assert.equal(
+      await controls(page).locator("#command").inputValue(),
+      "status",
+    );
     assert.equal(
       (await page.evaluate(() => window.baudloom.snapshot())).txBytes,
       txBeforeHistory,
     );
-    await page.locator("#clear-after-send").check();
-    await page.locator("#command").fill("中");
-    await page.locator("#ending").selectOption("cr");
+    await sendOption(page, () =>
+      controls(page).locator("#clear-after-send").check(),
+    );
+    await controls(page).locator("#command").fill("中");
+    await controls(page).locator("#ending").selectOption("cr");
     await page.waitForFunction(() =>
       document.querySelector("#send-bytes").textContent.includes("4 B"),
     );
-    await page.locator("#send").click();
+    await controls(page).locator("#send").click();
     await page.waitForFunction(
       () => document.querySelector("#command").value === "",
     );
-    await page.locator("#toggle-multi").click();
-    const row = page.locator(".command-row").first();
+    await controls(page).locator("#toggle-multi").click();
+    const row = controls(page).locator(".command-row").first();
     await row.locator(".slot-settings").click();
     await row.locator(".slot-name").fill("测试帧");
     await row.locator(".slot-format").selectOption("hex");
@@ -260,24 +339,14 @@ const path = require("node:path");
         (r) => Buffer.from(r.event.data, "base64").toString("hex") === "00ff",
       ),
     );
-    const bounds = await page.evaluate(() => ({
-      log: document.querySelector("main").getBoundingClientRect().right,
-      bank: document.querySelector("#command-bank").getBoundingClientRect()
-        .left,
-    }));
-    assert.ok(bounds.bank >= bounds.log);
-    const originalSide = await page.locator("#command-bank").boundingBox();
-    const sideHandle = await page.locator("#side-splitter").boundingBox();
-    await page.mouse.move(sideHandle.x + 2, sideHandle.y + 30);
-    await page.mouse.down();
-    await page.mouse.move(sideHandle.x - 65, sideHandle.y + 30, { steps: 5 });
-    await page.mouse.up();
-    assert.ok(
-      (await page.locator("#command-bank").boundingBox()).width >
-        originalSide.width + 50,
-    );
-    const originalBottom = await page.locator(".composer").boundingBox();
-    const bottomHandle = await page.locator("#bottom-splitter").boundingBox();
+    await expect(page.locator("#multi-dialog")).toBeVisible();
+    await page.locator("#collapse-multi").click();
+    const originalBottom = await controls(page)
+      .locator(".composer")
+      .boundingBox();
+    const bottomHandle = await controls(page)
+      .locator("#bottom-splitter")
+      .boundingBox();
     await page.mouse.move(bottomHandle.x + 50, bottomHandle.y + 2);
     await page.mouse.down();
     await page.mouse.move(bottomHandle.x + 50, bottomHandle.y - 35, {
@@ -285,45 +354,29 @@ const path = require("node:path");
     });
     await page.mouse.up();
     assert.ok(
-      (await page.locator(".composer").boundingBox()).height >
+      (await controls(page).locator(".composer").boundingBox()).height >
         originalBottom.height + 25,
-    );
-    const joint = await page.locator("#cross-splitter").boundingBox();
-    const beforeJointWidth = (await page.locator("#command-bank").boundingBox())
-      .width;
-    const beforeJointHeight = (await page.locator(".composer").boundingBox())
-      .height;
-    await page.mouse.move(joint.x + 7, joint.y + 7);
-    await page.mouse.down();
-    await page.mouse.move(joint.x - 23, joint.y - 23, { steps: 5 });
-    await page.mouse.up();
-    assert.ok(
-      (await page.locator("#command-bank").boundingBox()).width >
-        beforeJointWidth + 20,
-    );
-    assert.ok(
-      (await page.locator(".composer").boundingBox()).height >
-        beforeJointHeight + 20,
     );
     const savedLayout = await page.evaluate(() =>
       localStorage.getItem("baudloom.layout.v1"),
     );
+    await controls(page).locator("#toggle-multi").click();
     await row.locator(".slot-selected").check();
     await row.locator(".slot-checksum").selectOption("xor8");
-    const second = page.locator(".command-row").nth(1);
+    const second = controls(page).locator(".command-row").nth(1);
     await second.locator(".slot-text").fill("B");
     await second.locator(".slot-format").selectOption("hex");
     assert.equal(await second.locator(".slot-text").inputValue(), "42");
     await second.locator(".slot-selected").check();
-    const third = page.locator(".command-row").nth(2);
+    const third = controls(page).locator(".command-row").nth(2);
     await third.locator(".slot-text").fill("NOT SELECTED");
-    await page.locator("#multi-interval").fill("100");
+    await controls(page).locator("#multi-interval").fill("100");
     const beforeBatch = (await readFile(file, "utf8"))
       .trim()
       .split("\n")
       .map(JSON.parse)
       .filter((r) => r.event.kind === "tx-request").length;
-    await page.locator("#multi-timer").click();
+    await controls(page).locator("#multi-timer").click();
     await expect
       .poll(
         async () =>
@@ -331,8 +384,8 @@ const path = require("node:path");
             .completed,
       )
       .toBeGreaterThanOrEqual(3);
-    assert.equal(await page.locator("#command").isDisabled(), true);
-    await page.locator("#multi-timer").click();
+    assert.equal(await controls(page).locator("#command").isDisabled(), true);
+    await controls(page).locator("#multi-timer").click();
     await page.waitForFunction(
       () => !document.querySelector("#command").disabled,
     );
@@ -358,17 +411,25 @@ const path = require("node:path");
     await row.locator(".slot-checksum").selectOption("none");
     await row.locator(".slot-settings").click();
     assert.ok((await row.boundingBox()).height < 50);
-    await page.locator("#tx-format").selectOption("hex");
-    await page.locator("#command").fill("AA 01 03 00 00 00 0A BB");
-    await page.locator("#checksum").selectOption("modbus");
-    await page.locator("#checksum-start").fill("2");
-    await page.locator("#checksum-end").fill("7");
-    await page.locator("#checksum-order").selectOption("big");
+    await controls(page).locator("#tx-format").selectOption("hex");
+    await controls(page).locator("#command").fill("AA 01 03 00 00 00 0A BB");
+    await sendOption(page, () =>
+      controls(page).locator("#checksum").selectOption("modbus"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-start").fill("2"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-end").fill("7"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-order").selectOption("big"),
+    );
     assert.equal(
-      await page.locator("#checksum-value").textContent(),
+      await controls(page).locator("#checksum-value").textContent(),
       "校验值 CD C5",
     );
-    await page.locator("#send").click();
+    await controls(page).locator("#send").click();
     await expect
       .poll(async () =>
         (await readFile(file, "utf8")).includes(
@@ -376,15 +437,27 @@ const path = require("node:path");
         ),
       )
       .toBe(true);
-    await page.locator("#checksum-start").fill("1");
-    await page.locator("#checksum-end").fill("");
-    await page.locator("#checksum-order").selectOption("little");
-    await page.locator("#tx-format").selectOption("text");
-    await page.locator("#command").fill("123456789");
-    await page.locator("#ending").selectOption("none");
-    await page.locator("#checksum").selectOption("modbus");
-    await page.locator("#single-interval").fill("250");
-    await page.locator("#single-timer").click();
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-start").fill("1"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-end").fill(""),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#checksum-order").selectOption("little"),
+    );
+    await controls(page).locator("#tx-format").selectOption("text");
+    await controls(page).locator("#command").fill("123456789");
+    await controls(page).locator("#ending").selectOption("none");
+    await sendOption(page, () =>
+      controls(page).locator("#checksum").selectOption("modbus"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#single-interval").fill("250"),
+    );
+    await sendOption(page, () =>
+      controls(page).locator("#single-timer").click(),
+    );
     await expect
       .poll(
         async () =>
@@ -392,11 +465,16 @@ const path = require("node:path");
             .completed,
       )
       .toBeGreaterThanOrEqual(2);
-    await page.locator("#single-timer").click();
+    await sendOption(page, () =>
+      controls(page).locator("#single-timer").click(),
+    );
     await page.waitForFunction(
       () => !document.querySelector("#command").disabled,
     );
-    assert.equal(await page.locator("#command").inputValue(), "123456789");
+    assert.equal(
+      await controls(page).locator("#command").inputValue(),
+      "123456789",
+    );
     await expect
       .poll(async () =>
         (await readFile(file, "utf8")).includes(
@@ -404,11 +482,13 @@ const path = require("node:path");
         ),
       )
       .toBe(true);
-    await page.locator("#checksum").selectOption("none");
-    await page.locator("#ending").selectOption("crlf");
-    await page.locator("#toggle-multi").click();
-    await page.locator("#pause").click();
-    const visible = await page.locator("#log").textContent();
+    await sendOption(page, () =>
+      controls(page).locator("#checksum").selectOption("none"),
+    );
+    await controls(page).locator("#ending").selectOption("crlf");
+    await controls(page).locator("#toggle-multi").click();
+    await controls(page).locator("#pause").click();
+    const visible = await controls(page).locator("#log").textContent();
     const count = await page.evaluate(() =>
       window.baudloom.snapshot().then((x) => x.eventCount),
     );
@@ -418,9 +498,9 @@ const path = require("node:path");
           (await page.evaluate(() => window.baudloom.snapshot())).eventCount,
       )
       .toBeGreaterThan(count + 3);
-    assert.equal(await page.locator("#log").textContent(), visible);
-    await page.locator("#pause").click();
-    await page.locator("#clear").click();
+    assert.equal(await controls(page).locator("#log").textContent(), visible);
+    await controls(page).locator("#pause").click();
+    await controls(page).locator("#clear").click();
     await page.waitForFunction(
       () => document.querySelectorAll(".log-row").length > 0,
     );
@@ -428,19 +508,23 @@ const path = require("node:path");
       (await page.evaluate(() => window.baudloom.snapshot())).eventCount >
         count,
     );
-    await page.locator("#search").fill("<script>");
-    assert.equal(await page.locator(".log-row").count(), 0);
-    await page.locator("#search").fill("");
-    await page.locator("#command").fill("<img src=x onerror=alert(1)>");
-    await page.locator("#send").click();
+    await controls(page).locator("#search").fill("<script>");
+    assert.equal(await controls(page).locator(".log-row").count(), 0);
+    await controls(page).locator("#search").fill("");
+    await controls(page)
+      .locator("#command")
+      .fill("<img src=x onerror=alert(1)>");
+    await controls(page).locator("#send").click();
     await page.waitForFunction(() =>
       document.querySelector("#log").textContent.includes("<img"),
     );
-    assert.equal(await page.locator("#log img").count(), 0);
+    assert.equal(await controls(page).locator("#log img").count(), 0);
     const beforeReload = (await page.evaluate(() => window.baudloom.snapshot()))
       .eventCount;
-    await page.locator("#command").fill("reload-stop");
-    await page.locator("#single-timer").click();
+    await controls(page).locator("#command").fill("reload-stop");
+    await sendOption(page, () =>
+      controls(page).locator("#single-timer").click(),
+    );
     await expect
       .poll(
         async () =>
@@ -449,7 +533,7 @@ const path = require("node:path");
       )
       .toBe(true);
     await page.reload();
-    await expect(page.locator("#baud")).toHaveValue("123456");
+    await expect(controls(page).locator("#baud")).toHaveValue("123456");
     assert.equal(
       await page.evaluate(() => localStorage.getItem("baudloom.layout.v1")),
       savedLayout,
@@ -468,24 +552,19 @@ const path = require("node:path");
       )
       .toBeGreaterThan(beforeReload);
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
-    await page.locator("#toggle-multi").click();
-    assert.ok(
-      (await page.locator("#command-bank").boundingBox()).width >
-        originalSide.width + 50,
-    );
+    await controls(page).locator("#toggle-multi").click();
     assert.equal(
       (await page.evaluate(() => window.baudloom.snapshot())).viewLimits
         .maxRows,
       20000,
     );
-    await page.locator("#side-splitter").press("Home");
-    await page.locator("#bottom-splitter").press("Home");
+    await controls(page).locator("#bottom-splitter").press("Home");
     assert.equal(
-      await page.locator(".slot-text").first().inputValue(),
+      await controls(page).locator(".slot-text").first().inputValue(),
       "00 FF",
     );
-    await page.locator("#toggle-multi").click();
-    await page.locator("#connect").click();
+    await controls(page).locator("#toggle-multi").click();
+    await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "连接", exact: true }).waitFor();
     const text = await readFile(file, "utf8");
     const records = text.trim().split("\n").map(JSON.parse);
@@ -497,28 +576,28 @@ const path = require("node:path");
         filePaths: [file],
       });
     }, file);
-    await page.locator("#history").click();
+    await controls(page).locator("#history").click();
     await page.waitForFunction(() =>
       document.querySelector("#connection-state").textContent.includes("离线"),
     );
-    assert.ok(await page.locator("#log").textContent());
-    assert.equal(await page.locator("#send").isDisabled(), true);
-    assert.equal(await page.locator("#command").isEnabled(), true);
+    assert.ok(await controls(page).locator("#log").textContent());
+    assert.equal(await controls(page).locator("#send").isDisabled(), true);
+    assert.equal(await controls(page).locator("#command").isEnabled(), true);
     await mkdir(".local/screenshots", { recursive: true });
     await page.screenshot({ path: ".local/screenshots/desktop-offline.png" });
-    await page.locator("#target").selectOption("demo");
-    await page.locator("#connect").click();
+    await controls(page).locator("#target").selectOption("demo");
+    await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
     await page.waitForFunction(() =>
       document.querySelector("#log").textContent.includes("[demo] sample=18"),
     );
-    await page.locator("#command").fill("version");
-    await page.locator("#send").click();
+    await controls(page).locator("#command").fill("version");
+    await controls(page).locator("#send").click();
     await page.waitForFunction(() =>
       document.querySelector("#log").textContent.includes("主机写入完成"),
     );
     await page.screenshot({ path: ".local/screenshots/desktop-connected.png" });
-    await page.locator("#toggle-multi").click();
+    await controls(page).locator("#toggle-multi").click();
     await page.screenshot({
       path: ".local/screenshots/desktop-multi-send.png",
     });
@@ -533,7 +612,9 @@ const path = require("node:path");
       )
       .toBe(true);
     assert.ok(
-      (await page.locator("#log").evaluate((e) => e.clientHeight)) > 50,
+      (await controls(page)
+        .locator("#log")
+        .evaluate((e) => e.clientHeight)) > 50,
     );
     await page.screenshot({
       path: ".local/screenshots/desktop-small-send.png",
@@ -542,15 +623,17 @@ const path = require("node:path");
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 820),
     );
     await page.waitForFunction(() => innerWidth === 1280);
-    await page.locator("#toggle-multi").click();
+    await controls(page).locator("#toggle-multi").click();
     // The splitter's ResizeObserver clamps the saved width after native window resize.
     await expect
       .poll(() =>
         page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       )
       .toBe(true);
-    await page.locator("#command").fill("exit-stop");
-    await page.locator("#single-timer").click();
+    await controls(page).locator("#command").fill("exit-stop");
+    await sendOption(page, () =>
+      controls(page).locator("#single-timer").click(),
+    );
     await expect
       .poll(
         async () =>
@@ -590,8 +673,11 @@ const path = require("node:path");
       },
     });
     const production = await app.firstWindow();
-    await production.locator("#connect").waitFor();
-    assert.equal(await production.locator("#save-session").isChecked(), false);
+    await controls(production).locator("#connect").waitFor();
+    assert.equal(
+      await controls(production).locator("#save-session").isChecked(),
+      false,
+    );
     const dataPath = await app.evaluate(({ app }) => app.getPath("userData"));
     assert.equal(
       dataPath,
@@ -611,21 +697,30 @@ const path = require("node:path");
       );
     });
     await production.reload();
-    await expect(production.locator("#directory-path")).toContainText(
+    await expect(controls(production).locator("#directory-path")).toContainText(
       "sessions",
     );
-    await expect(production.locator("#view-state")).toContainText("缓存 0");
-    assert.equal(await production.locator("#command").isEnabled(), true);
+    await expect(controls(production).locator("#view-state")).toContainText(
+      "0 行",
+    );
+    assert.equal(
+      await controls(production).locator("#command").isEnabled(),
+      true,
+    );
     await app.evaluate(() => {
       globalThis.releasePortEnumeration();
       delete globalThis.releasePortEnumeration;
     });
-    await expect(production.locator("#target")).toHaveText("未发现串口");
-    await production.locator("#command").fill("123");
-    await production.locator("#tx-format").selectOption("hex");
-    await production.locator("#checksum").selectOption("sum8");
-    await production.locator("#toggle-multi").click();
-    const productionRows = production.locator(".command-row");
+    await expect(controls(production).locator("#target")).toHaveText(
+      "未发现串口",
+    );
+    await controls(production).locator("#command").fill("123");
+    await controls(production).locator("#tx-format").selectOption("hex");
+    await sendOption(production, () =>
+      controls(production).locator("#checksum").selectOption("sum8"),
+    );
+    await controls(production).locator("#toggle-multi").click();
+    const productionRows = controls(production).locator(".command-row");
     for (let i = 0; i < 4; i++) {
       await productionRows.nth(i).locator(".slot-format").selectOption("hex");
       await productionRows
@@ -640,15 +735,17 @@ const path = require("node:path");
           ][i],
         );
     }
-    assert.ok(!/演示|预览/.test(await production.locator("body").innerText()));
+    assert.ok(
+      !/演示|预览/.test(await controls(production).locator("body").innerText()),
+    );
     await production.screenshot({
       path: ".local/screenshots/desktop-production.png",
     });
-    await production.locator("#view-options").click();
+    await controls(production).locator("#view-options").click();
     await production.screenshot({
       path: ".local/screenshots/desktop-view-settings.png",
     });
-    await production.locator("#view-options").click();
+    await controls(production).locator("#view-options").click();
     const base = await production.evaluate(() => window.baudloom.snapshot());
     await app.evaluate(({ ipcMain }, base) => {
       ipcMain.removeHandler("snapshot");
@@ -670,24 +767,116 @@ const path = require("node:path");
         viewLimits: { maxRows: 50000, maxChars: 16 * 1048576 },
       }));
     }, base);
-    await expect(production.locator("#log")).toContainText(
+    await expect(controls(production).locator("#log")).toContainText(
       "fixture line 49999",
     );
-    assert.ok((await production.locator(".log-row").count()) < 200);
-    await production.locator("#pause").click();
-    await production.locator("#log").evaluate((n) => {
-      n.scrollTop = 0;
-    });
-    await expect(production.locator("#log")).toContainText("fixture line 0 ");
-    assert.ok((await production.locator(".log-row").count()) < 200);
-    await production.locator("#pause").click();
-    await production.locator("#search").fill("fixture line 43210 ");
-    await expect(production.locator("#log")).toContainText(
+    assert.ok((await controls(production).locator(".log-row").count()) < 200);
+    await controls(production).locator("#view-options").click();
+    await controls(production).locator("#wrap-lines").uncheck();
+    await controls(production).locator("#view-options").click();
+    const horizontalExtent = await production
+      .locator("#log")
+      .evaluate((n) => n.scrollWidth);
+    assert.ok(horizontalExtent > 3000);
+    await controls(production)
+      .locator("#log")
+      .evaluate((n) => {
+        n.scrollLeft = n.scrollWidth;
+      });
+    await expect
+      .poll(() =>
+        production
+          .locator("#log")
+          .evaluate((n) =>
+            Math.abs(n.scrollLeft - n.previousElementSibling.scrollLeft),
+          ),
+      )
+      .toBeLessThan(1);
+    await controls(production).locator("#pause").click();
+    await controls(production)
+      .locator("#log")
+      .evaluate((n) => {
+        n.scrollTop = 0;
+      });
+    await expect(controls(production).locator("#log")).toContainText(
+      "fixture line 0 ",
+    );
+    assert.ok((await controls(production).locator(".log-row").count()) < 200);
+    assert.equal(
+      await controls(production)
+        .locator("#log")
+        .evaluate((n) => n.scrollWidth),
+      horizontalExtent,
+    );
+    await controls(production).locator("#view-options").click();
+    await controls(production).locator("#wrap-lines").check();
+    await controls(production).locator("#view-options").click();
+    await expect
+      .poll(() =>
+        controls(production)
+          .locator("#log")
+          .evaluate((n) => n.scrollLeft),
+      )
+      .toBe(0);
+    await controls(production).locator("#pause").click();
+    await controls(production).locator("#search").fill("fixture line 43210 ");
+    await expect(controls(production).locator("#log")).toContainText(
       "fixture line 43210 ",
     );
-    assert.equal(await production.locator(".log-row").count(), 1);
+    assert.equal(await controls(production).locator(".log-row").count(), 1);
+    await production
+      .locator("#search")
+      .fill("fixture line 43210 |fixture line 43212 ");
+    await expect(controls(production).locator("#match-count")).toContainText(
+      "2",
+    );
+    await expect(controls(production).locator(".log-row mark")).toHaveCount(2);
+    await controls(production).locator("#match-next").click();
+    await expect(controls(production).locator(".search-current")).toContainText(
+      "43212",
+    );
+    await controls(production).locator("#search").press("Shift+Enter");
+    await expect(controls(production).locator(".search-current")).toContainText(
+      "43210",
+    );
+    await controls(production).locator("#filter-matches").uncheck();
+    await controls(production).locator("#match-next").click();
+    await expect(controls(production).locator(".search-current")).toContainText(
+      "43212",
+    );
+    await expect(controls(production).locator("#log")).toContainText(
+      "fixture line 43211 ",
+    );
+    await controls(production).locator("#filter-matches").check();
+    await controls(production).locator("#search-exclude").fill("43212");
+    await expect(controls(production).locator(".log-row")).toHaveCount(1);
+    await controls(production).locator("#match-case").check();
+    await controls(production).locator("#search").fill("FIXTURE LINE 43210 ");
+    await expect(controls(production).locator(".log-row")).toHaveCount(0);
+    await controls(production).locator("#match-case").uncheck();
+    await expect(controls(production).locator(".log-row")).toHaveCount(1);
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setContentSize(760, 560),
+    );
+    await expect
+      .poll(() =>
+        production.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      )
+      .toBe(true);
+    await controls(production).locator("#export-log").click();
+    await expect(controls(production).locator("#export-dialog")).toBeVisible();
+    await expect
+      .poll(() =>
+        production
+          .locator("#export-dialog")
+          .evaluate((n) => n.scrollWidth <= n.clientWidth),
+      )
+      .toBe(true);
+    await controls(production).locator("#export-close").click();
     console.log(
-      "PASS Electron: live recording with raw-cache backfill, column visibility/width, font size, persistent view limits, joint splitter, 50000-row virtual viewport and full-cache search; isolated renderer, capture, TX/RX, disk record, pause/clear, untrusted text, reload/offline/exit; disconnected editing, full device names, per-port drafts, history recall without send, exact CR/HEX bytes, saved custom rows, 760px layout, format conversion, checksums, right panel, selected cyclic send, single timer, reload cancels schedule, opt-in recording, portable storage, checksum range/order, compact rows, draggable and persistent splitters.",
+      "PASS Electron: live session text export, cancelled save dialog, keyword highlights/navigation/exclusion/case/context, live recording with raw-cache backfill, column visibility/width, font size, persistent view limits, receive/send splitter, 50000-row virtual viewport and full-cache search; isolated renderer, capture, TX/RX, disk record, pause/clear, untrusted text, reload/offline/exit; disconnected editing, full device names, per-port drafts, history recall without send, exact CR/HEX bytes, saved custom rows, 760px layout, format conversion, checksums, multi-send dialog, selected cyclic send, single timer, reload cancels schedule, opt-in recording, portable storage, checksum range/order, compact rows, draggable and persistent splitters.",
     );
   } finally {
     if (app) await app.close();

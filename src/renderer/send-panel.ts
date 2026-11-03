@@ -1,3 +1,4 @@
+import type { DeviceProfile } from "../profiles";
 import type { Api, Port, SendRequest, Snapshot } from "../shared";
 import {
   blankCommand,
@@ -69,6 +70,12 @@ export class SendPanel {
       this.checksumOrder,
     ])
       control.oninput = () => this.update();
+    get("stop-sending").onclick = () => {
+      if (this.snapshot?.schedule.active)
+        void this.schedule(
+          this.snapshot.schedule.kind === "multi" ? "multi" : "single",
+        );
+    };
     get("single-timer").onclick = () => void this.schedule("single");
     get("multi-timer").onclick = () => void this.schedule("multi");
     this.ending.onchange = () => this.update();
@@ -89,6 +96,9 @@ export class SendPanel {
       this.input.focus();
     };
     get("toggle-multi").onclick = () => this.toggle();
+    get("multi-dialog").addEventListener("close", () =>
+      get("toggle-multi").setAttribute("aria-expanded", "false"),
+    );
     get("collapse-multi").onclick = () => {
       this.toggle(false);
       get("toggle-multi").focus();
@@ -128,6 +138,36 @@ export class SendPanel {
     this.renderSlots();
     this.renderHistory();
     this.update();
+  }
+  profileValues() {
+    return {
+      draft: this.current(),
+      commands: this.state.commands.map((c) => ({ ...c })),
+      clearAfterSend: this.clearAfter.checked,
+      singleInterval: Number(get<HTMLInputElement>("single-interval").value),
+      multiInterval: Number(get<HTMLInputElement>("multi-interval").value),
+    };
+  }
+  applyProfile(profile: DeviceProfile) {
+    if (
+      this.sending ||
+      this.busy ||
+      this.schedulePending ||
+      this.snapshot?.schedule.active
+    )
+      throw Error("请先停止发送，再应用配置");
+    this.state.commands = profile.commands.map((c) => ({ ...c }));
+    this.state.clearAfterSend = this.clearAfter.checked =
+      profile.clearAfterSend;
+    this.fill({ ...profile.draft });
+    get<HTMLInputElement>("single-interval").value = String(
+      profile.singleInterval,
+    );
+    get<HTMLInputElement>("multi-interval").value = String(
+      profile.multiInterval,
+    );
+    this.renderSlots();
+    this.persist();
   }
   private persist() {
     try {
@@ -169,8 +209,12 @@ export class SendPanel {
       return false;
     }
   }
-  private toggle(open = get("command-bank").hidden) {
-    get("command-bank").hidden = !open;
+  private toggle(open = !get<HTMLDialogElement>("multi-dialog").open) {
+    const dialog = get<HTMLDialogElement>("multi-dialog");
+    if (open) {
+      get<HTMLDialogElement>("send-options-dialog").close();
+      dialog.showModal();
+    } else dialog.close();
     get("toggle-multi").setAttribute("aria-expanded", String(open));
   }
   private contextKey = "";
@@ -228,6 +272,24 @@ export class SendPanel {
       !locked;
     get<HTMLButtonElement>("send").disabled =
       !ready || !command.text || Boolean(invalid);
+    const reason = invalid
+      ? "请修正发送内容"
+      : this.snapshot?.state !== "connected"
+        ? "请先连接"
+        : locked
+          ? "请先停止定时发送"
+          : this.sending
+            ? "正在发送…"
+            : this.busy
+              ? "正在处理操作…"
+              : this.snapshot.target !== this.target
+                ? "设备已变化，请重新选择"
+                : !command.text
+                  ? "请输入发送内容"
+                  : "";
+    get("send-availability").textContent = reason;
+    get("send").title = invalid || reason || "发送 · Ctrl+Enter";
+
     get<HTMLButtonElement>("clear-command").disabled = !command.text || locked;
     get<HTMLButtonElement>("save-command").disabled = !command.text || locked;
     get<HTMLButtonElement>("add-command").disabled =
@@ -287,6 +349,9 @@ export class SendPanel {
       : status?.error
         ? `定时已停止：${status.error}`
         : "定时发送未启动";
+    get("stop-sending").hidden = !running;
+    get("send-options").title =
+      `发送选项${command.checksum !== "none" ? " · 校验" : ""}${running ? " · 定时中" : ""}`;
     let wire = "";
     get("checksum-value").textContent = "";
     if (command.text && !invalid) {

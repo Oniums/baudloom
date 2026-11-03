@@ -1,3 +1,4 @@
+import { serialSettings, serialError } from "../serial-settings";
 import { EventEmitter } from "node:events";
 import { SerialPort } from "serialport";
 import type { SerialPortStream } from "@serialport/stream";
@@ -10,30 +11,48 @@ export interface Transport extends EventEmitter {
 }
 export class SerialTransport extends EventEmitter implements Transport {
   private port: SerialPortStream;
+  private settings: ReturnType<typeof serialSettings>;
   constructor(
     config: ConnectionConfig,
     factory: (options: any) => SerialPortStream = (options) =>
       new SerialPort(options),
   ) {
     super();
+    const settings = (this.settings = serialSettings(config.serial));
     this.port = factory({
       path: config.target,
       baudRate: config.baudRate,
       autoOpen: false,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      rtscts: false,
+      dataBits: settings.dataBits,
+      stopBits: settings.stopBits,
+      parity: settings.parity,
+      rtscts: settings.flow === "rtscts",
+      xon: settings.flow === "xonxoff",
+      xoff: settings.flow === "xonxoff",
       highWaterMark: 16384,
     });
     this.port.on("data", (b: Buffer) => this.emit("bytes", b));
-    this.port.on("error", (e) => this.emit("fault", e));
+    this.port.on("error", (e) => this.emit("fault", serialError(e)));
     this.port.on("close", () => this.emit("closed"));
   }
   async open() {
     await new Promise<void>((resolve, reject) =>
-      this.port.open((e) => (e ? reject(e) : resolve())),
+      this.port.open((e) => (e ? reject(serialError(e)) : resolve())),
     );
+    // The binding's set() also writes RTS; never override driver-owned handshake lines.
+    if (this.settings.flow !== "rtscts") {
+      try {
+        await new Promise<void>((resolve, reject) =>
+          this.port.set(
+            { dtr: this.settings.dtr, rts: this.settings.rts },
+            (e) => (e ? reject(serialError(e)) : resolve()),
+          ),
+        );
+      } catch (error) {
+        await this.close().catch(() => {});
+        throw error;
+      }
+    }
   }
   async write(bytes: Buffer) {
     if (!this.port.isOpen) throw Error("串口未打开");

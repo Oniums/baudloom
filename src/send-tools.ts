@@ -172,7 +172,7 @@ export function encodeSend(command: EncodingOptions): Uint8Array {
   output.set(endingBytes, bytes.length + trailer.length);
   return output;
 }
-function draft(value: any): value is CommandDraft {
+export function isCommandDraft(value: any): value is CommandDraft {
   return (
     value &&
     typeof value.text === "string" &&
@@ -237,7 +237,7 @@ export function restoreSendTools(raw: string | null): SendTools {
             v &&
             typeof v.name === "string" &&
             v.name.length <= 60 &&
-            draft(v) &&
+            isCommandDraft(v) &&
             v.text.length <= 8192,
         )
         .slice(0, 12);
@@ -254,7 +254,11 @@ export function restoreSendTools(raw: string | null): SendTools {
     if (Array.isArray(input.history)) {
       for (const v of input.history.slice(0, 20).reverse()) {
         const target = v?.target;
-        if (draft(v) && typeof target === "string" && target.length <= 1024) {
+        if (
+          isCommandDraft(v) &&
+          typeof target === "string" &&
+          target.length <= 1024
+        ) {
           try {
             encodeSend(v);
             state.history = rememberSend(state.history, {

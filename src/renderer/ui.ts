@@ -1,3 +1,8 @@
+import { setupToolbar } from "./toolbar";
+import { setupConnectionPanel } from "./connection-panel";
+import { setupReading } from "./reading-panel";
+import { compileSearch, type LogFilter } from "../log-search";
+import { setupExport } from "./export-panel";
 import { BAUD_RATES, parseBaudRate } from "../baud-rate";
 import { mergeSnapshot } from "../snapshot";
 import { setupViewControls } from "./view-controls";
@@ -11,6 +16,7 @@ declare global {
   }
 }
 setupLayout();
+setupToolbar();
 const api = window.baudloom;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -44,9 +50,11 @@ baud.oninput = () => {
   baud.setAttribute("aria-invalid", String(!baud.validity.valid));
 };
 let ports: Port[] = [];
-let enumeration = 0;
 let latest: Snapshot | null = null;
 let paused = false;
+let frozen: Snapshot | null = null;
+let matches: number[] = [];
+let activeMatch = 0;
 let clearAt = 0;
 let session = "";
 let busy = false;
@@ -54,6 +62,63 @@ let polling = false;
 let renderedKey = "";
 let uiError = "";
 const logViewport = new LogViewport(el("log"));
+function currentFilter(): LogFilter {
+  return {
+    query: search.value,
+    exclude: el<HTMLInputElement>("search-exclude").value,
+    caseSensitive: el<HTMLInputElement>("match-case").checked,
+    onlyMatches: el<HTMLInputElement>("filter-matches").checked,
+  };
+}
+setupExport(api, () => ({
+  snapshot: latest,
+  mode: mode.value as "text" | "hex",
+  afterRowId: clearAt,
+  filter: currentFilter(),
+}));
+function updateMatchCount() {
+  el("match-count").textContent = matches.length
+    ? `${Math.max(0, matches.indexOf(activeMatch)) + 1} / ${matches.length} 个匹配行`
+    : "0 个匹配行";
+  el<HTMLButtonElement>("match-previous").disabled = !matches.length;
+  el<HTMLButtonElement>("match-next").disabled = !matches.length;
+}
+function navigateMatch(step: number) {
+  if (!matches.length) return;
+  const index =
+    (matches.indexOf(activeMatch) + step + matches.length) % matches.length;
+  activeMatch = matches[index];
+  logViewport.navigateTo(activeMatch);
+  updateMatchCount();
+}
+el("match-previous").onclick = () => navigateMatch(-1);
+el("match-next").onclick = () => navigateMatch(1);
+function openSearch() {
+  el("more-tools-panel").hidePopover();
+  el("search-panel").hidden = false;
+  el("search-options").setAttribute("aria-expanded", "true");
+  search.focus();
+}
+function closeSearch() {
+  search.value = "";
+  el<HTMLInputElement>("search-exclude").value = "";
+  el("search-panel").hidden = true;
+  el<HTMLDetailsElement>("search-advanced").open = false;
+  el("search-options").setAttribute("aria-expanded", "false");
+  activeMatch = 0;
+  renderedKey = "";
+  if (latest) render(latest);
+  el("search-options").focus();
+}
+el("search-options").onclick = () =>
+  el("search-panel").hidden ? openSearch() : closeSearch();
+el("search-close").onclick = closeSearch;
+search.onkeydown = (event) => {
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    navigateMatch(event.shiftKey ? -1 : 1);
+  }
+};
 const viewControls = setupViewControls(
   () => logViewport.refresh(),
   async (limits) => {
@@ -72,6 +137,38 @@ const sendPanel = new SendPanel(
   failure,
   api,
 );
+const connectionPanel = setupConnectionPanel(sendPanel, () => latest, failure);
+const readingPanel = setupReading(
+  (id) => {
+    freeze();
+    search.value = "";
+    el<HTMLInputElement>("search-exclude").value = "";
+    clearAt = 0;
+    renderedKey = "";
+    if (latest) render(latest);
+    logViewport.navigateTo(id);
+  },
+  (ids) => logViewport.selectRows(ids),
+);
+function freeze() {
+  if (paused) return;
+  paused = true;
+  frozen = latest;
+  logViewport.setFollowing(false);
+  el("pause").textContent = "继续跟随";
+  el("pause").setAttribute("aria-pressed", "true");
+  renderedKey = "";
+  if (latest) render(latest);
+}
+logViewport.onBrowse = freeze;
+el("record-state").onclick = () =>
+  el<HTMLDialogElement>("status-dialog").showModal();
+el("status-close").onclick = () =>
+  el<HTMLDialogElement>("status-dialog").close();
+el("send-options").onclick = () =>
+  el<HTMLDialogElement>("send-options-dialog").showModal();
+el("send-options-close").onclick = () =>
+  el<HTMLDialogElement>("send-options-dialog").close();
 let measuredLabel = "";
 let measuredWidth = 280;
 const measurement = document.createElement("canvas").getContext("2d")!;
@@ -79,6 +176,10 @@ function updateDeviceName() {
   const selected = ports.find((p) => p.path === target.value);
   const label = selected?.label ?? "";
   target.title = label;
+  el("device-summary").textContent = label || "选择设备";
+  el("connection-options").title = label
+    ? `${label} · ${baud.value} baud · 点击设置`
+    : "选择设备与连接参数";
   if (label !== measuredLabel) {
     measuredLabel = label;
     measurement.font = getComputedStyle(target).font;
@@ -127,6 +228,8 @@ function render(s: Snapshot) {
     session = s.sessionId;
     clearAt = 0;
     paused = false;
+    frozen = null;
+    activeMatch = 0;
     renderedKey = "";
     el("pause").textContent = "暂停滚动";
     el("pause").setAttribute("aria-pressed", "false");
@@ -164,6 +267,11 @@ function render(s: Snapshot) {
     target.value = s.target;
   }
   updateDeviceName();
+  connectionPanel.update();
+  mode.disabled = s.fileKind === "text";
+  document
+    .querySelector("main")!
+    .classList.toggle("plain-text", s.fileKind === "text");
   const names: Record<string, string> = {
     idle: "未连接",
     connecting: "连接中",
@@ -174,63 +282,97 @@ function render(s: Snapshot) {
     error: "采集故障",
   };
   el("connection-state").textContent =
-    `${names[s.state]}${s.target ? " · " + s.target : ""}${s.source === "synthetic" && s.sessionId ? "（合成）" : ""}`;
-  el("session-title").textContent = s.sessionFile
-    ? s.sessionFile.split(/[\\/]/).at(-1)!
-    : s.sessionId
-      ? "本次会话未保存 · 勾选保存可补写缓存"
-      : "选择设备后连接，或打开已有记录";
+    `${names[s.state]}${s.source === "synthetic" && s.sessionId && s.fileKind !== "text" ? "（合成）" : ""}`;
+  el("session-title").textContent =
+    s.state === "offline"
+      ? s.fileKind === "text"
+        ? s.sessionFile.split(/[\\/]/).at(-1)!
+        : "历史会话"
+      : active
+        ? "实时接收"
+        : s.sessionId
+          ? "本次会话"
+          : "接收";
   el("session-title").title = s.sessionFile;
   el("error").textContent = s.error ?? uiError;
   el("error").hidden = !(s.error || uiError);
   el("notice").textContent = s.warning ?? "";
   el("notice").hidden = !s.warning;
   el("counts").textContent =
-    `RX ${humanBytes(s.rxBytes)} · TX ${humanBytes(s.txBytes)} · ${s.eventCount} 事件`;
+    `RX ${humanBytes(s.rxBytes)} · TX ${humanBytes(s.txBytes)}`;
   el("view-state").textContent =
-    `${paused ? "滚动已暂停" : "跟随最新"} · 缓存 ${s.rows.length} / ${s.viewLimits.maxRows} 行 · ${s.viewLimits.maxChars / 1048576} Mi 字符上限${s.totalRows > s.rows.length ? " · 更早显示内容已淘汰" : ""}`;
-  el("record-state").textContent =
+    `${paused ? "阅读中" : "跟随最新"} · ${s.rows.length} 行${s.totalRows > s.rows.length ? " · 更早内容已淘汰" : ""}`;
+  el("view-state").title =
+    `缓存 ${s.rows.length} / ${s.viewLimits.maxRows} 行 · ${s.viewLimits.maxChars / 1048576} Mi 字符上限`;
+  el("back-to-latest").hidden = !paused;
+  el("back-to-latest").textContent =
+    `回到最新${paused && frozen ? " · 新增 " + Math.max(0, s.totalRows - frozen.totalRows) + " 行" : ""}`;
+  el("record-details").textContent =
     s.state === "offline"
-      ? "只读 · 未修改原始记录"
+      ? s.fileKind === "text"
+        ? "只读文本 · 无接收时间与方向"
+        : "只读 · 未修改原始记录"
       : s.sessionFile
-        ? `${active ? "正在保存" : "已保存"} · 已写 ${humanBytes(s.writtenBytes)} · 待写 ${humanBytes(s.pendingBytes)} · ${s.syncedAt ? "最近同步 " + new Date(s.syncedAt).toLocaleTimeString() : "尚未同步"}`
+        ? `${active ? "正在保存" : "已保存"} · ${s.segmentCount} 段 · 已写 ${humanBytes(s.writtenBytes)} · 待写 ${humanBytes(s.pendingBytes)} · ${s.syncedAt ? "最近同步 " + new Date(s.syncedAt).toLocaleTimeString() : "尚未同步"}`
         : recording.checked && !s.sessionId
           ? "连接后保存到所选目录"
           : `未保存 · 可补写 ${s.bufferedEvents} 条事件${s.droppedEvents ? ` · 已淘汰 ${s.droppedEvents} 条` : ""}`;
-  if (s.backfillActive) el("record-state").textContent += " · 正在补写缓存…";
+  if (s.backfillActive) el("record-details").textContent += " · 正在补写缓存…";
   if (s.sessionFile && s.state !== "offline" && s.backfilledEvents)
-    el("record-state").textContent +=
+    el("record-details").textContent +=
       ` · 已补写 ${s.backfilledEvents} 条${s.droppedEvents ? `（已淘汰 ${s.droppedEvents} 条无法补写）` : ""}`;
+  el("record-state").textContent =
+    s.state === "offline"
+      ? "只读"
+      : s.backfillActive
+        ? "正在补写…"
+        : s.sessionFile
+          ? `${active ? "正在保存" : "已保存"}${s.backfilledEvents ? " · 已补写缓存" : ""}`
+          : recording.checked && !s.sessionId
+            ? "连接后保存"
+            : "未保存";
+  el("record-details").textContent += ` · ${s.eventCount} 事件`;
   el("record-state").title =
-    s.sessionFile ||
-    "未生成会话文件；勾选保存可补写仍保留的原始缓存，已淘汰事件无法恢复。关闭或重连会丢弃未保存缓存。";
-  if (paused) return;
-  const query = search.value.toLowerCase();
+    el("record-details").textContent + "；点击查看文件与目录";
+  el("record-file").textContent =
+    s.currentSessionFile || s.sessionFile || "尚未生成会话文件";
+  const display = paused && frozen ? frozen : s;
+  const filter = currentFilter();
+  const query = filter.query;
+  const compiled = compileSearch(filter);
   const key = [
-    s.sessionId,
-    s.totalRows,
-    s.rxBytes,
+    display.sessionId,
+    display.totalRows,
+    display.rxBytes,
     clearAt,
-    query,
+    JSON.stringify(filter),
     mode.value,
-    s.state,
-    s.rows.length,
+    display.state,
+    display.rows.length,
     s.viewLimits.maxRows,
     s.viewLimits.maxChars,
   ].join("|");
   if (key === renderedKey) return;
   renderedKey = key;
-  const rows = s.rows.filter(
-    (r) => r.id > clearAt && (!query || r.text.toLowerCase().includes(query)),
+  readingPanel.update(display.rows, display.sessionId + ":" + mode.value);
+  const rows = display.rows.filter(
+    (row) => row.id > clearAt && compiled.visible(row.text),
   );
+  matches = compiled.active
+    ? rows.filter((row) => compiled.matches(row.text)).map((row) => row.id)
+    : [];
+  if (!matches.includes(activeMatch)) activeMatch = matches[0] ?? 0;
+  updateMatchCount();
   logViewport.set(
     rows,
-    !query,
+    !paused && !query && !filter.exclude,
     query
       ? "当前缓存没有匹配内容"
       : s.sessionId
         ? "等待新记录（清屏不删除原始缓存或磁盘记录）"
         : "选择串口后点击连接，或打开已有会话记录。",
+    compiled.highlights,
+    activeMatch,
   );
 }
 async function poll() {
@@ -258,26 +400,38 @@ async function poll() {
     polling = false;
   }
 }
+let refreshing = false;
 async function refresh() {
-  const selected = target.value;
-  const ticket = ++enumeration;
-  const discovered = await api.ports();
-  if (ticket !== enumeration) return;
-  ports = discovered;
-  target.replaceChildren(
-    ...ports.map((p) => {
-      const o = document.createElement("option");
-      o.value = p.path;
-      o.textContent = p.label;
-      o.title = p.label;
-      return o;
-    }),
-  );
-  target.value = ports.some((p) => p.path === selected)
-    ? selected
-    : (ports[0]?.path ?? "");
-  if (!ports.length) target.add(new Option("未发现串口", ""));
-  updateDeviceName();
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    const discovered = await api.ports();
+    if (
+      JSON.stringify(discovered) === JSON.stringify(ports) &&
+      target.options[0]?.text !== "正在枚举…"
+    )
+      return;
+    const selected = target.value;
+    const previous = ports.find((p) => p.path === selected);
+    ports = discovered;
+    target.replaceChildren(
+      ...ports.map((p) => {
+        const o = new Option(p.label, p.path);
+        o.title = p.label;
+        return o;
+      }),
+    );
+    if (selected && !ports.some((p) => p.path === selected)) {
+      target.add(
+        new Option(`${previous?.label ?? selected}（未检测到）`, selected),
+      );
+      target.value = selected;
+    } else target.value = selected || ports[0]?.path || "";
+    if (!target.options.length) target.add(new Option("未发现串口", ""));
+    updateDeviceName();
+  } finally {
+    refreshing = false;
+  }
 }
 el<HTMLInputElement>("save-session").onchange = () => {
   if (
@@ -303,18 +457,32 @@ el("connect").onclick = () =>
       target: port.path,
       source: port.source,
       baudRate,
+      serial: connectionPanel.read(),
       saveSession: el<HTMLInputElement>("save-session").checked,
     });
     try {
       localStorage.setItem("baudloom.baud.v1", String(baudRate));
+      connectionPanel.remember();
     } catch {}
   });
 el("pause").onclick = () => {
   paused = !paused;
+  frozen = paused ? latest : null;
   logViewport.setFollowing(!paused && !search.value);
   el("pause").textContent = paused ? "继续跟随" : "暂停滚动";
   el("pause").setAttribute("aria-pressed", String(paused));
   renderedKey = "";
+  if (latest) render(latest);
+};
+el("back-to-latest").onclick = () => {
+  search.value = "";
+  el<HTMLInputElement>("search-exclude").value = "";
+  paused = false;
+  frozen = null;
+  renderedKey = "";
+  logViewport.setFollowing(true);
+  el("pause").textContent = "暂停滚动";
+  el("pause").setAttribute("aria-pressed", "false");
   if (latest) render(latest);
 };
 el("clear").onclick = () => {
@@ -325,11 +493,18 @@ el("clear").onclick = () => {
 };
 search.oninput = () => {
   renderedKey = "";
-  if (latest && !paused) render(latest);
+  if (latest) render(latest);
 };
+for (const id of ["search-exclude", "match-case", "filter-matches"]) {
+  el(id).addEventListener("input", () => {
+    renderedKey = "";
+    if (latest) render(latest);
+  });
+}
 mode.onchange = () => {
   clearAt = 0;
   paused = false;
+  frozen = null;
   el("pause").textContent = "暂停滚动";
   el("pause").setAttribute("aria-pressed", "false");
   renderedKey = "";
@@ -338,10 +513,15 @@ mode.onchange = () => {
 el("mark").onclick = () => void action(() => api.mark("手工标记"));
 el("history").onclick = () =>
   void action(async () => {
-    const s = await api.openSession();
-    if (s) {
-      mode.value = "text";
-      render(s);
+    el("history").textContent = "读取中…";
+    try {
+      const s = await api.openSession();
+      if (s) {
+        mode.value = "text";
+        render(s);
+      }
+    } finally {
+      el("history").textContent = "打开日志";
     }
   });
 el("directory").onclick = () =>
@@ -355,6 +535,16 @@ el("directory").onclick = () =>
 document.addEventListener("keydown", (e) => {
   if (e.isComposing) return;
   if (
+    e.key === "Escape" &&
+    !el("search-panel").hidden &&
+    !document.querySelector("dialog[open]") &&
+    !(e.target as Element).closest("[popover]")
+  ) {
+    e.preventDefault();
+    closeSearch();
+    return;
+  }
+  if (
     (e.ctrlKey || e.metaKey) &&
     e.key === "Enter" &&
     document.activeElement === command
@@ -364,7 +554,7 @@ document.addEventListener("keydown", (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
     e.preventDefault();
-    search.focus();
+    if (!document.querySelector("dialog[open]")) openSearch();
   }
 });
 void (async () => {
@@ -392,4 +582,15 @@ void (async () => {
     );
   };
   void tick();
+  const watchPorts = async () => {
+    try {
+      await refresh();
+      el("ports-note").hidden = true;
+    } catch {
+      el("ports-note").hidden = false;
+      el("ports-note").textContent = "设备列表更新失败，可点击刷新重试";
+    }
+    setTimeout(watchPorts, 2000);
+  };
+  setTimeout(watchPorts, 2000);
 })();

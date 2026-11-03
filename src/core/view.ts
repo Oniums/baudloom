@@ -37,6 +37,8 @@ export class View {
   private hexSize = 0;
   private decoder = new LineDecoder();
   private lastAt = "";
+  private lastMono: string | undefined;
+  private lastRxMono: string | undefined;
   private lastRxAt = "";
   textSnapshot() {
     return this.snapshot("text");
@@ -63,11 +65,23 @@ export class View {
     }
     const rows = unchanged ? [] : buffer.slice(low);
     if (partial && !unchanged && total >= afterId)
-      rows.push({ id: total, at: this.lastRxAt, dir: "RX", text: partial });
+      rows.push({
+        id: total,
+        at: this.lastRxAt,
+        mono: this.lastRxMono,
+        dir: "RX",
+        text: partial,
+      });
     return { rows, total, count, firstId };
   }
   private add(at: string, dir: string, text: string, hex = false) {
-    const row = { id: hex ? ++this.hexTotal : ++this.total, at, dir, text };
+    const row = {
+      id: hex ? ++this.hexTotal : ++this.total,
+      at,
+      mono: this.lastMono,
+      dir,
+      text,
+    };
     const rows = hex ? this.hexRows : this.rows;
     rows.push(row);
     if (hex) this.hexSize += text.length;
@@ -81,11 +95,17 @@ export class View {
       else this.size -= old.text.length;
     }
   }
+  appendText(text: string) {
+    this.revision++;
+    this.add("", "", text);
+  }
   apply(e: StoredEvent) {
     this.revision++;
     this.lastAt = e.at;
+    this.lastMono = e.mono;
     if (e.kind === "rx") {
       this.lastRxAt = e.at;
+      this.lastRxMono = e.mono;
       const b = Buffer.from(e.data ?? "", "base64");
       for (const line of this.decoder.push(b)) this.add(e.at, "RX", line);
       for (let i = 0; i < b.length; i += 32)
@@ -136,8 +156,11 @@ export class View {
   }
   finish() {
     this.revision++;
+    const mono = this.lastMono;
+    this.lastMono = this.lastRxMono;
     for (const line of this.decoder.finish())
-      this.add(this.lastAt, "RX", `${line} [未终止片段]`);
+      this.add(this.lastRxAt, "RX", `${line} [未终止片段]`);
+    this.lastMono = mono;
     this.decoder = new LineDecoder();
   }
 }

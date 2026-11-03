@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { Api } from "../shared";
 const api: Api = {
+  exportLog: (request) => ipcRenderer.invoke("export-log", request),
+  cancelExport: () => ipcRenderer.invoke("cancel-export"),
   ports: () => ipcRenderer.invoke("ports"),
   connect: (config) => ipcRenderer.invoke("connect", config),
   startRecording: (sessionId) =>

@@ -48,6 +48,12 @@ process.parentPort.on("message", async ({ data }) => {
       case "mark":
         result = await capture.mark(args[0]);
         break;
+      case "export":
+        result = await capture.exportLog(args[0], args[1]);
+        break;
+      case "cancelExport":
+        capture.cancelExport();
+        break;
       case "directory":
         capture.setDirectory(args[0]);
         break;

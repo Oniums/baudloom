@@ -5,6 +5,7 @@ import {
   type ViewLimits,
 } from "../view-settings";
 interface Preferences {
+  wrapLines: boolean;
   showTime: boolean;
   showDirection: boolean;
   timeWidth: number;
@@ -19,16 +20,17 @@ export function setupViewControls(
 ) {
   const key = "baudloom.view.v1";
   const prefs: Preferences = {
+    wrapLines: true,
     showTime: true,
     showDirection: true,
-    timeWidth: 118,
-    directionWidth: 52,
+    timeWidth: 110,
+    directionWidth: 36,
     fontSize: 14,
     limits: { ...DEFAULT_VIEW_LIMITS },
   };
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
-    for (const field of ["showTime", "showDirection"] as const)
+    for (const field of ["showTime", "showDirection", "wrapLines"] as const)
       if (typeof saved[field] === "boolean") prefs[field] = saved[field];
     for (const [field, min, max] of [
       ["timeWidth", 64, 320],
@@ -46,7 +48,6 @@ export function setupViewControls(
   const get = <T extends HTMLElement>(id: string) =>
     document.getElementById(id) as T;
   const main = document.querySelector("main")!;
-  const panel = get<HTMLElement>("view-settings");
   const toggle = get<HTMLButtonElement>("view-options");
   const time = get<HTMLInputElement>("show-time"),
     dir = get<HTMLInputElement>("show-direction"),
@@ -59,6 +60,7 @@ export function setupViewControls(
     } catch {}
   }
   function apply() {
+    main.classList.toggle("no-wrap", !prefs.wrapLines);
     main.classList.toggle("hide-time", !prefs.showTime);
     main.classList.toggle("hide-direction", !prefs.showDirection);
     main.style.setProperty("--time-width", `${prefs.timeWidth}px`);
@@ -84,6 +86,13 @@ export function setupViewControls(
       get("view-memory").textContent = String(error);
     }
   }
+  const wrap = get<HTMLInputElement>("wrap-lines");
+  wrap.checked = prefs.wrapLines;
+  wrap.onchange = () => {
+    prefs.wrapLines = wrap.checked;
+    apply();
+    save();
+  };
   time.checked = prefs.showTime;
   dir.checked = prefs.showDirection;
   font.value = String(prefs.fontSize);
@@ -125,28 +134,15 @@ export function setupViewControls(
       button.disabled = false;
     }
   };
-  function close() {
-    panel.hidden = true;
-    toggle.setAttribute("aria-expanded", "false");
-  }
+  const dialog = get<HTMLDialogElement>("view-dialog");
   toggle.onclick = () => {
-    panel.hidden = !panel.hidden;
-    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+    dialog.showModal();
+    toggle.setAttribute("aria-expanded", "true");
   };
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !panel.hidden) {
-      close();
-      toggle.focus();
-    }
-  });
-  document.addEventListener("pointerdown", (event) => {
-    if (
-      !panel.hidden &&
-      !panel.contains(event.target as Node) &&
-      !toggle.contains(event.target as Node)
-    )
-      close();
-  });
+  get("view-close").onclick = () => dialog.close();
+  dialog.addEventListener("close", () =>
+    toggle.setAttribute("aria-expanded", "false"),
+  );
   for (const [id, field, min, max] of [
     ["time-resizer", "timeWidth", 64, 320],
     ["direction-resizer", "directionWidth", 30, 160],
@@ -181,7 +177,7 @@ export function setupViewControls(
       handle.onlostpointercapture =
         finish;
     handle.ondblclick = () => {
-      change(field === "timeWidth" ? 118 : 52);
+      change(field === "timeWidth" ? 110 : 36);
       save();
     };
     handle.onkeydown = (event) => {
@@ -190,8 +186,8 @@ export function setupViewControls(
       change(
         event.key === "Home"
           ? field === "timeWidth"
-            ? 118
-            : 52
+            ? 110
+            : 36
           : prefs[field] + (event.key === "ArrowRight" ? 8 : -8),
       );
       save();
