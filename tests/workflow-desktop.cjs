@@ -134,8 +134,20 @@ const path = require("node:path");
     await controls(page).locator("#mark-next").click();
     await expect(controls(page).locator("#back-to-latest")).toBeVisible();
     await controls(page).locator("#measure-time").click();
-    await controls(page).locator(".log-row").first().click();
-    await controls(page).locator(".log-row").last().click();
+    // Choose two visible rows so scrolling cannot unmount the first highlight.
+    const visibleIds = await page.locator("#log").evaluate((log) => {
+      const viewport = log.getBoundingClientRect();
+      return Array.from(log.querySelectorAll(".log-row"))
+        .filter((row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.top >= viewport.top && rect.bottom <= viewport.bottom;
+        })
+        .slice(0, 2)
+        .map((row) => row.dataset.rowId);
+    });
+    assert.equal(visibleIds.length, 2);
+    for (const id of visibleIds)
+      await page.locator(`.log-row[data-row-id="${id}"]`).click();
     await expect(controls(page).locator("#time-difference")).toContainText(
       "主机单调时钟",
     );
