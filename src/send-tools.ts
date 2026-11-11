@@ -1,4 +1,5 @@
 import type { SendRequest } from "./shared";
+export const MAX_COMMAND_SLOTS = 32;
 export type CommandDraft = Pick<
   SendRequest,
   | "text"
@@ -224,7 +225,7 @@ export function restoreSendTools(raw: string | null): SendTools {
     history: [],
     commands: Array.from({ length: 4 }, blankCommand),
   });
-  if (!raw || raw.length > 1024 * 1024) return empty();
+  if (!raw || raw.length > 3 * 1024 * 1024) return empty();
   try {
     const input = JSON.parse(raw);
     if (input?.version !== 1) return empty();
@@ -240,7 +241,7 @@ export function restoreSendTools(raw: string | null): SendTools {
             isCommandDraft(v) &&
             v.text.length <= 8192,
         )
-        .slice(0, 12);
+        .slice(0, MAX_COMMAND_SLOTS);
       if (slots.length)
         state.commands = slots.map((v: CommandSlot) => ({
           name: v.name,

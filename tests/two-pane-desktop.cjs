@@ -22,7 +22,7 @@ const path = require("node:path");
     await expect(page.locator("#search-panel")).toBeHidden();
     await expect(page.locator("dialog[open]")).toHaveCount(0);
     await expect(page.locator(".workspace > .session-pane")).toHaveCount(1);
-    await expect(page.locator(".workspace #command-bank")).toHaveCount(0);
+    await expect(page.locator(".workspace #command-bank")).toBeVisible();
     await page.locator("#connection-options").click();
     await page.locator("#baud-presets").selectOption("230400");
     await page.locator("#connection-close").click();
@@ -44,15 +44,20 @@ const path = require("node:path");
     await expect(page.locator("#stop-sending")).toBeVisible();
     await page.locator("#stop-sending").click();
     await expect(page.locator("#stop-sending")).toBeHidden();
+    await page.locator("#collapse-multi").click();
     const receiveBox = await page.locator("main").boundingBox();
     await page.locator("#toggle-multi").click();
-    await expect(page.locator("#multi-dialog")).toBeVisible();
+    await expect(page.locator("#command-bank")).toBeVisible();
     await page.locator(".slot-text").first().fill("multi draft");
     await page.locator(".slot-selected").first().check();
     await page.locator("#multi-interval").fill("100");
     await page.locator("#multi-timer").click();
-    await page.keyboard.press("Escape");
-    await expect(page.locator("#multi-dialog")).toBeHidden();
+    await expect(page.locator("#log")).toBeVisible();
+    assert.ok(
+      (await page.locator("main").boundingBox()).width < receiveBox.width,
+    );
+    await page.locator("#collapse-multi").click();
+    await expect(page.locator("#command-bank")).toBeHidden();
     assert.deepEqual(await page.locator("main").boundingBox(), receiveBox);
     await expect(page.locator("#stop-sending")).toBeVisible();
     await page.locator("#stop-sending").click();
@@ -81,7 +86,6 @@ const path = require("node:path");
         filePaths: [file],
       });
     }, file);
-    await page.locator("#more-tools").click();
     await page.locator("#history").click();
     await expect(page.locator(".log-row")).toHaveCount(5);
     await page.locator("#search-options").click();
@@ -146,7 +150,7 @@ const path = require("node:path");
     }
     assert.deepEqual(errors, []);
     console.log(
-      "PASS two-pane desktop: collapsed tools, connection and live backfill entry points, timer stop without reopening settings, modal multi-send without resizing receive area, match/exclude/highlights/context, close/Escape restores all rows, Ctrl+F, 760px menu.",
+      "PASS two-pane desktop: collapsed tools, connection and live backfill entry points, timer stop without reopening settings, docked multi-send with restored log width, match/exclude/highlights/context, close/Escape restores all rows, Ctrl+F, 760px menu.",
     );
   } finally {
     if (app) await app.close();

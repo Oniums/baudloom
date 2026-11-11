@@ -136,6 +136,7 @@ export interface SendRequest {
   ending: "none" | "cr" | "lf" | "crlf";
 }
 export interface Api {
+  setAppearance(theme: "dark" | "light"): Promise<void>;
   ports(): Promise<Port[]>;
   connect(config: ConnectionConfig): Promise<void>;
   stop(): Promise<void>;

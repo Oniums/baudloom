@@ -205,3 +205,17 @@ test("additional checksum variants have explicit parameters and known check vect
     );
   }
 });
+
+test("all 32 named command rows survive storage in their original order", () => {
+  const template = restoreSendTools(null).commands[0];
+  const commands = Array.from({ length: 32 }, (_, i) => ({
+    ...template,
+    name: "row " + (i + 1),
+    text: "AT+" + i,
+    selected: i % 2 === 0,
+  }));
+  assert.deepEqual(
+    restoreSendTools(JSON.stringify({ version: 1, commands })).commands,
+    commands,
+  );
+});

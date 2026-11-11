@@ -3,25 +3,69 @@ export function setupLayout() {
   const workspace = document.querySelector<HTMLElement>(".workspace")!;
   const composer = document.querySelector<HTMLElement>(".composer")!;
   const handle = document.getElementById("bottom-splitter")!;
+  const minimum = 56;
   const key = "baudloom.layout.v1";
   let preferred: number | null = null;
   try {
     const value = JSON.parse(localStorage.getItem(key) ?? "{}").bottom;
-    if (Number.isFinite(value) && value >= 100 && value <= 4000)
+    if (Number.isFinite(value) && value >= minimum && value <= 4000)
       preferred = value;
   } catch {}
-  const maximum = () => Math.max(100, workspace.clientHeight - 165);
+  const divider = document.getElementById("bank-splitter")!;
+  const bank = document.getElementById("command-bank")!;
+  const widthKey = "baudloom.bank-width";
+  const maxWidth = () => Math.min(720, Math.floor(window.innerWidth * 0.47));
+  function setBankWidth(width: number | null) {
+    if (width === null) {
+      bank.style.removeProperty("--bank-width");
+      localStorage.removeItem(widthKey);
+    } else {
+      const clamped = Math.max(255, Math.min(width, maxWidth()));
+      bank.style.setProperty("--bank-width", clamped + "px");
+      localStorage.setItem(widthKey, String(clamped));
+    }
+  }
+  const savedWidth = Number(localStorage.getItem(widthKey));
+  if (savedWidth >= 255)
+    bank.style.setProperty("--bank-width", savedWidth + "px");
+  let startX = 0,
+    startWidth = 0;
+  divider.onpointerdown = (event) => {
+    if (event.button !== 0) return;
+    startX = event.clientX;
+    startWidth = bank.offsetWidth;
+    divider.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+  divider.onpointermove = (event) => {
+    if (divider.hasPointerCapture(event.pointerId))
+      setBankWidth(startWidth + startX - event.clientX);
+  };
+  divider.ondblclick = () => setBankWidth(null);
+  divider.onkeydown = (event) => {
+    if (event.key === "Home") setBankWidth(null);
+    else if (event.key === "ArrowLeft") setBankWidth(bank.offsetWidth + 16);
+    else if (event.key === "ArrowRight") setBankWidth(bank.offsetWidth - 16);
+    else return;
+    event.preventDefault();
+  };
+  new ResizeObserver(() => {
+    divider.setAttribute("aria-valuemin", "255");
+    divider.setAttribute("aria-valuemax", String(maxWidth()));
+    divider.setAttribute("aria-valuenow", String(bank.offsetWidth));
+  }).observe(bank);
+  const maximum = () => Math.max(minimum, workspace.clientHeight - 165);
   function apply() {
     composer.style.maxHeight = `${maximum()}px`;
     composer.style.height =
       preferred === null
         ? ""
-        : `${Math.max(100, Math.min(maximum(), preferred))}px`;
+        : `${Math.max(minimum, Math.min(maximum(), preferred))}px`;
     handle.setAttribute(
       "aria-valuenow",
       String(Math.round(composer.getBoundingClientRect().height)),
     );
-    handle.setAttribute("aria-valuemin", "100");
+    handle.setAttribute("aria-valuemin", String(minimum));
     handle.setAttribute("aria-valuemax", String(maximum()));
   }
   function save() {
@@ -43,7 +87,10 @@ export function setupLayout() {
   };
   handle.onpointermove = (event) => {
     if (!dragging) return;
-    preferred = Math.max(100, Math.min(maximum(), height + y - event.clientY));
+    preferred = Math.max(
+      minimum,
+      Math.min(maximum(), height + y - event.clientY),
+    );
     apply();
   };
   const finish = () => {
@@ -65,7 +112,7 @@ export function setupLayout() {
     if (event.key === "Home") preferred = null;
     else if (["ArrowUp", "ArrowDown"].includes(event.key))
       preferred = Math.max(
-        100,
+        minimum,
         Math.min(
           maximum(),
           composer.getBoundingClientRect().height +

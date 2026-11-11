@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeTheme,
   utilityProcess,
   type UtilityProcess,
 } from "electron";
@@ -112,6 +113,7 @@ app
       console.error(error);
     });
     const renderer = join(__dirname, "../renderer/index.html");
+    nativeTheme.themeSource = "dark";
     window = new BrowserWindow({
       width: 1280,
       height: 820,
@@ -120,7 +122,7 @@ app
       title: "Baudloom",
       icon: join(__dirname, "baudloom.png"),
       show: false,
-      backgroundColor: "#fafafa",
+      backgroundColor: "#1e1e1e",
       webPreferences: {
         preload: join(__dirname, "preload.cjs"),
         contextIsolation: true,
@@ -141,6 +143,11 @@ app
           throw Error("不受信任的界面请求");
         return fn(...args);
       });
+    handle("set-appearance", (theme: unknown) => {
+      if (theme !== "dark" && theme !== "light") throw Error("无效的外观设置");
+      nativeTheme.themeSource = theme;
+      window.setBackgroundColor(theme === "dark" ? "#1e1e1e" : "#ffffff");
+    });
     for (const method of [
       "ports",
       "connect",

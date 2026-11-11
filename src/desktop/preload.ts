@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { Api } from "../shared";
 const api: Api = {
+  setAppearance: (theme) => ipcRenderer.invoke("set-appearance", theme),
   exportLog: (request) => ipcRenderer.invoke("export-log", request),
   cancelExport: () => ipcRenderer.invoke("cancel-export"),
   ports: () => ipcRenderer.invoke("ports"),

@@ -3,6 +3,7 @@ import type { LogFilter } from "../log-search";
 
 export function setupExport(
   api: Api,
+  selectedText: () => string,
   context: () => {
     snapshot: Snapshot | null;
     mode: "text" | "hex";
@@ -35,12 +36,7 @@ export function setupExport(
   };
   get("export-log").onclick = () => {
     captured = context();
-    const selected = window.getSelection();
-    selection =
-      selected?.rangeCount &&
-      get("log").contains(selected.getRangeAt(0).commonAncestorContainer)
-        ? selected.toString()
-        : "";
+    selection = selectedText();
     scope.querySelector<HTMLOptionElement>('[value="session"]')!.disabled =
       !captured.snapshot?.sessionFile || captured.snapshot.fileKind === "text";
     scope.querySelector<HTMLOptionElement>('[value="selection"]')!.disabled =

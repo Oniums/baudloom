@@ -31,12 +31,6 @@ function controls(page) {
               (await page.locator("#view-dialog").isVisible())
             )
               return page.locator("#view-close").click();
-            if (
-              key === "click" &&
-              info.id === "toggle-multi" &&
-              (await page.locator("#multi-dialog").isVisible())
-            )
-              return page.locator("#collapse-multi").click();
             for (const dialog of await page.locator("dialog[open]").all()) {
               if ((await dialog.getAttribute("id")) !== info.dialog)
                 await page.keyboard.press("Escape");
@@ -49,7 +43,6 @@ function controls(page) {
                 "connection-dialog": "connection-options",
                 "send-options-dialog": "send-options",
                 "status-dialog": "record-state",
-                "multi-dialog": "toggle-multi",
                 "view-dialog": "view-options",
               }[info.dialog];
               if (!opener) throw Error("Missing dialog entry: " + info.dialog);

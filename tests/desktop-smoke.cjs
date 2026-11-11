@@ -4,6 +4,10 @@ const assert = require("node:assert/strict");
 const { mkdtemp, readFile, rm, mkdir, readdir } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
+async function showBank(page, open) {
+  if ((await page.locator("#command-bank").isVisible()) !== open)
+    await controls(page).locator("#toggle-multi").click();
+}
 async function sendOption(page, fn) {
   await controls(page).locator("#send-options").click();
   try {
@@ -75,8 +79,8 @@ async function sendOption(page, fn) {
     });
     await controls(page).locator("#target").selectOption("COM99");
     assert.equal(
-      await controls(page).locator("#device-name").isVisible(),
-      true,
+      await controls(page).locator("#target").getAttribute("title"),
+      await controls(page).locator("#target option:checked").textContent(),
     );
     // The splitter's ResizeObserver clamps the saved width after native window resize.
     await expect
@@ -232,21 +236,9 @@ async function sendOption(page, fn) {
     await controls(page).locator("#log-font-size").fill("14");
     await controls(page).locator("#log-font-size").press("Tab");
     await controls(page).locator("#view-options").click();
-    const colHandle = await controls(page)
-      .locator("#time-resizer")
-      .boundingBox();
-    const beforeCol = await controls(page)
-      .locator(".time-column")
-      .boundingBox();
-    await page.mouse.move(colHandle.x + 5, colHandle.y + 10);
-    await page.mouse.down();
-    await page.mouse.move(colHandle.x + 45, colHandle.y + 10);
-    await page.mouse.up();
-    assert.ok(
-      (await controls(page).locator(".time-column").boundingBox()).width >
-        beforeCol.width + 30,
+    await expect(page.locator("#log .time").first()).toHaveText(
+      /^\[\d{2}:\d{2}:\d{2}\.\d{3}\]$/,
     );
-    await controls(page).locator("#time-resizer").press("Home");
     await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "连接", exact: true }).waitFor();
     await controls(page).locator("#save-session").check();
@@ -313,7 +305,7 @@ async function sendOption(page, fn) {
     await page.waitForFunction(
       () => document.querySelector("#command").value === "",
     );
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, true);
     const row = controls(page).locator(".command-row").first();
     await row.locator(".slot-settings").click();
     await row.locator(".slot-name").fill("测试帧");
@@ -339,7 +331,7 @@ async function sendOption(page, fn) {
         (r) => Buffer.from(r.event.data, "base64").toString("hex") === "00ff",
       ),
     );
-    await expect(page.locator("#multi-dialog")).toBeVisible();
+    await expect(page.locator("#command-bank")).toBeVisible();
     await page.locator("#collapse-multi").click();
     const originalBottom = await controls(page)
       .locator(".composer")
@@ -360,7 +352,7 @@ async function sendOption(page, fn) {
     const savedLayout = await page.evaluate(() =>
       localStorage.getItem("baudloom.layout.v1"),
     );
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, true);
     await row.locator(".slot-selected").check();
     await row.locator(".slot-checksum").selectOption("xor8");
     const second = controls(page).locator(".command-row").nth(1);
@@ -486,7 +478,7 @@ async function sendOption(page, fn) {
       controls(page).locator("#checksum").selectOption("none"),
     );
     await controls(page).locator("#ending").selectOption("crlf");
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, false);
     await controls(page).locator("#pause").click();
     const visible = await controls(page).locator("#log").textContent();
     const count = await page.evaluate(() =>
@@ -552,7 +544,7 @@ async function sendOption(page, fn) {
       )
       .toBeGreaterThan(beforeReload);
     await page.getByRole("button", { name: "断开", exact: true }).waitFor();
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, true);
     assert.equal(
       (await page.evaluate(() => window.baudloom.snapshot())).viewLimits
         .maxRows,
@@ -563,7 +555,7 @@ async function sendOption(page, fn) {
       await controls(page).locator(".slot-text").first().inputValue(),
       "00 FF",
     );
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, false);
     await controls(page).locator("#connect").click();
     await page.getByRole("button", { name: "连接", exact: true }).waitFor();
     const text = await readFile(file, "utf8");
@@ -597,7 +589,7 @@ async function sendOption(page, fn) {
       document.querySelector("#log").textContent.includes("主机写入完成"),
     );
     await page.screenshot({ path: ".local/screenshots/desktop-connected.png" });
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, true);
     await page.screenshot({
       path: ".local/screenshots/desktop-multi-send.png",
     });
@@ -623,7 +615,7 @@ async function sendOption(page, fn) {
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 820),
     );
     await page.waitForFunction(() => innerWidth === 1280);
-    await controls(page).locator("#toggle-multi").click();
+    await showBank(page, false);
     // The splitter's ResizeObserver clamps the saved width after native window resize.
     await expect
       .poll(() =>
@@ -719,7 +711,7 @@ async function sendOption(page, fn) {
     await sendOption(production, () =>
       controls(production).locator("#checksum").selectOption("sum8"),
     );
-    await controls(production).locator("#toggle-multi").click();
+    await showBank(production, true);
     const productionRows = controls(production).locator(".command-row");
     for (let i = 0; i < 4; i++) {
       await productionRows.nth(i).locator(".slot-format").selectOption("hex");
@@ -783,15 +775,9 @@ async function sendOption(page, fn) {
       .evaluate((n) => {
         n.scrollLeft = n.scrollWidth;
       });
-    await expect
-      .poll(() =>
-        production
-          .locator("#log")
-          .evaluate((n) =>
-            Math.abs(n.scrollLeft - n.previousElementSibling.scrollLeft),
-          ),
-      )
-      .toBeLessThan(1);
+    assert.ok(
+      await production.locator("#log").evaluate((node) => node.scrollLeft > 0),
+    );
     await controls(production).locator("#pause").click();
     await controls(production)
       .locator("#log")
@@ -819,6 +805,80 @@ async function sendOption(page, fn) {
       )
       .toBe(0);
     await controls(production).locator("#pause").click();
+    // Exercise the copy handler with an isolated data transfer, leaving the OS clipboard alone.
+    const allText = await production.evaluate(async () => {
+      const { rows } = await window.baudloom.snapshot();
+      const time = new Intl.DateTimeFormat("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(new Date(rows[0].at));
+      return rows.map((r) => "[" + time + ".000]收← " + r.text).join("\n");
+    });
+    await production.locator("#log").focus();
+    await production.keyboard.press("Control+a");
+    const copyText = () =>
+      production.evaluate(() => {
+        const data = new DataTransfer();
+        document.activeElement.dispatchEvent(
+          new ClipboardEvent("copy", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: data,
+          }),
+        );
+        return data.getData("text/plain");
+      });
+    assert.ok(
+      (await copyText()) === allText,
+      "all 50,000 rows including wrapped lines must copy exactly",
+    );
+    // Extend a partial selection from a previously unmounted line into the last screen.
+    const startText = "fixture line 5 ";
+    const endText = "fixture line 49997 serial";
+    await production.evaluate(
+      ([from, to]) => {
+        const walker = document.createTreeWalker(
+          document.querySelector("#log"),
+          NodeFilter.SHOW_TEXT,
+        );
+        let first, offset;
+        while (walker.nextNode()) {
+          const node = walker.currentNode,
+            value = node.textContent;
+          if (!first && value.includes(from)) {
+            first = node;
+            offset = value.indexOf(from);
+          }
+          if (first && value.includes(to)) {
+            window
+              .getSelection()
+              .setBaseAndExtent(
+                first,
+                offset,
+                node,
+                value.indexOf(to) + to.length,
+              );
+            return;
+          }
+        }
+        throw Error("long selection endpoints missing");
+      },
+      [startText, endText],
+    );
+    const partial = await copyText();
+    assert.ok(
+      partial ===
+        allText.slice(
+          allText.indexOf(startText),
+          allText.indexOf(endText) + endText.length,
+        ),
+      "cross-screen partial selection must copy exactly",
+    );
+    await controls(production).locator("#command").fill("outside selection");
+    await production.locator("#command").press("Control+a");
+    assert.equal(await copyText(), "");
     await controls(production).locator("#search").fill("fixture line 43210 ");
     await expect(controls(production).locator("#log")).toContainText(
       "fixture line 43210 ",
@@ -876,7 +936,7 @@ async function sendOption(page, fn) {
       .toBe(true);
     await controls(production).locator("#export-close").click();
     console.log(
-      "PASS Electron: live session text export, cancelled save dialog, keyword highlights/navigation/exclusion/case/context, live recording with raw-cache backfill, column visibility/width, font size, persistent view limits, receive/send splitter, 50000-row virtual viewport and full-cache search; isolated renderer, capture, TX/RX, disk record, pause/clear, untrusted text, reload/offline/exit; disconnected editing, full device names, per-port drafts, history recall without send, exact CR/HEX bytes, saved custom rows, 760px layout, format conversion, checksums, multi-send dialog, selected cyclic send, single timer, reload cancels schedule, opt-in recording, portable storage, checksum range/order, compact rows, draggable and persistent splitters.",
+      "PASS Electron: live session text export, cancelled save dialog, keyword highlights/navigation/exclusion/case/context, live recording with raw-cache backfill, inline time/direction preferences, font size, persistent view limits, receive/send splitter, 50000-row virtual viewport and full-cache search; isolated renderer, capture, TX/RX, disk record, pause/clear, untrusted text, reload/offline/exit; disconnected editing, full device names, per-port drafts, history recall without send, exact CR/HEX bytes, saved custom rows, 760px layout, format conversion, checksums, docked command list, selected cyclic send, single timer, reload cancels schedule, opt-in recording, portable storage, checksum range/order, compact rows, draggable and persistent splitters.",
     );
   } finally {
     if (app) await app.close();

@@ -9,6 +9,7 @@ import {
   payload,
   convertFormat,
   rememberSend,
+  MAX_COMMAND_SLOTS,
   restoreSendTools,
   type CommandDraft,
   type SendTools,
@@ -96,15 +97,13 @@ export class SendPanel {
       this.input.focus();
     };
     get("toggle-multi").onclick = () => this.toggle();
-    get("multi-dialog").addEventListener("close", () =>
-      get("toggle-multi").setAttribute("aria-expanded", "false"),
-    );
+    this.toggle(localStorage.getItem("baudloom.bank-open") !== "false");
     get("collapse-multi").onclick = () => {
       this.toggle(false);
       get("toggle-multi").focus();
     };
     get("add-command").onclick = () => {
-      if (this.state.commands.length >= 12) return;
+      if (this.state.commands.length >= MAX_COMMAND_SLOTS) return;
       this.state.commands.push(blankCommand());
       this.renderSlots();
       this.persist();
@@ -121,10 +120,12 @@ export class SendPanel {
       }
       const empty = this.state.commands.find((c) => !c.text && !c.name);
       if (empty) Object.assign(empty, command);
-      else if (this.state.commands.length < 12)
+      else if (this.state.commands.length < MAX_COMMAND_SLOTS)
         this.state.commands.push({ ...command, name: "" });
       else {
-        this.failure(Error("多条发送最多 12 条，请先删除不用的条目"));
+        this.failure(
+          Error(`多条发送最多 ${MAX_COMMAND_SLOTS} 条，请先删除不用的条目`),
+        );
         return;
       }
       this.renderSlots();
@@ -209,13 +210,13 @@ export class SendPanel {
       return false;
     }
   }
-  private toggle(open = !get<HTMLDialogElement>("multi-dialog").open) {
-    const dialog = get<HTMLDialogElement>("multi-dialog");
-    if (open) {
+  private toggle(open = get("command-bank").hidden) {
+    if (open && get<HTMLDialogElement>("send-options-dialog").open)
       get<HTMLDialogElement>("send-options-dialog").close();
-      dialog.showModal();
-    } else dialog.close();
+    get("command-bank").hidden = !open;
+    get("bank-splitter").hidden = !open;
     get("toggle-multi").setAttribute("aria-expanded", String(open));
+    localStorage.setItem("baudloom.bank-open", String(open));
   }
   private contextKey = "";
   setContext(snapshot: Snapshot | null, port: Port | undefined, busy: boolean) {
@@ -293,7 +294,7 @@ export class SendPanel {
     get<HTMLButtonElement>("clear-command").disabled = !command.text || locked;
     get<HTMLButtonElement>("save-command").disabled = !command.text || locked;
     get<HTMLButtonElement>("add-command").disabled =
-      this.state.commands.length >= 12 || locked;
+      this.state.commands.length >= MAX_COMMAND_SLOTS || locked;
     for (const control of [
       this.input,
       this.format,
@@ -422,7 +423,7 @@ export class SendPanel {
         text.rows = 1;
         text.wrap = "off";
         text.value = slot.text;
-        text.placeholder = "输入要发送的内容";
+        text.placeholder = "要发送的内容";
         text.maxLength = 8192;
         text.spellcheck = false;
         text.setAttribute("aria-label", `第 ${index + 1} 条内容`);
@@ -478,6 +479,10 @@ export class SendPanel {
         const preview = document.createElement("output");
         preview.className = "slot-preview";
         const refreshPreview = () => {
+          send.textContent = slot.name || "发送";
+          send.title = slot.name
+            ? "发送：" + slot.name
+            : "发送第 " + (index + 1) + " 条";
           text.title = slot.name ? `${slot.name}：${slot.text}` : slot.text;
           try {
             preview.textContent = slot.text
@@ -561,10 +566,12 @@ export class SendPanel {
           field("至", end),
           order,
           preview,
+          remove,
         );
         const settings = document.createElement("button");
         settings.className = "slot-settings";
-        settings.textContent = "设置";
+        settings.textContent = "⋯";
+        settings.title = "备注、换行、校验与删除";
         settings.setAttribute("aria-expanded", "false");
         settings.setAttribute("aria-label", `第 ${index + 1} 条设置`);
         settings.onclick = () => {
@@ -574,7 +581,7 @@ export class SendPanel {
         };
         const line = document.createElement("div");
         line.className = "slot-line";
-        line.append(selected, text, format, send, settings, remove);
+        line.append(selected, text, format, send, settings);
         row.append(line, options);
         refreshPreview();
         return row;

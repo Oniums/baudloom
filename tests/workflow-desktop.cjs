@@ -8,14 +8,20 @@ const path = require("node:path");
   const root = await mkdtemp(path.join(tmpdir(), "baudloom-workflow-ui-"));
   let app;
   try {
-    app = await electron.launch({
-      executablePath: process.env.BAUDLOOM_EXECUTABLE,
-      args: [
-        ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
-        ...(process.env.BAUDLOOM_EXECUTABLE ? [] : ["."]),
-      ],
-      env: { ...process.env, BAUDLOOM_DATA_DIR: root, BAUDLOOM_TEST_MODE: "1" },
-    });
+    const launch = () =>
+      electron.launch({
+        executablePath: process.env.BAUDLOOM_EXECUTABLE,
+        args: [
+          ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
+          ...(process.env.BAUDLOOM_EXECUTABLE ? [] : ["."]),
+        ],
+        env: {
+          ...process.env,
+          BAUDLOOM_DATA_DIR: root,
+          BAUDLOOM_TEST_MODE: "1",
+        },
+      });
+    app = await launch();
     const page = await app.firstWindow(),
       errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -89,12 +95,40 @@ const path = require("node:path");
     await expect(controls(page).locator("#mark-list")).toContainText(
       "手工标记",
     );
+    // Exercise an overflowing viewport, not just the "back to latest" button.
+    await expect
+      .poll(
+        () =>
+          page.locator("#log").evaluate((n) => n.scrollHeight - n.clientHeight),
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(100);
     await controls(page).locator("#log").hover();
     await page.mouse.wheel(0, -200);
     await expect(controls(page).locator("#back-to-latest")).toBeVisible();
     await expect(controls(page).locator("#back-to-latest")).not.toHaveText(
       /新增 0 行/,
     );
+    await page.mouse.wheel(0, 4000);
+    await expect(controls(page).locator("#back-to-latest")).toBeHidden();
+    const resumedRows = (await page.evaluate(() => window.baudloom.snapshot()))
+      .totalRows;
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.baudloom.snapshot().then((s) => s.totalRows),
+        ),
+      )
+      .toBeGreaterThan(resumedRows);
+    await expect
+      .poll(() =>
+        page
+          .locator("#log")
+          .evaluate((n) => n.scrollHeight - n.clientHeight - n.scrollTop),
+      )
+      .toBeLessThanOrEqual(2);
+    await page.mouse.wheel(0, -250);
+    await expect(controls(page).locator("#back-to-latest")).toBeVisible();
     await controls(page).locator("#back-to-latest").click();
     await expect(controls(page).locator("#back-to-latest")).toBeHidden();
     await controls(page).locator("#mark-next").click();
@@ -210,9 +244,79 @@ const path = require("node:path");
     await page.reload();
     await controls(page).locator("#view-options").click();
     await expect(controls(page).locator("#wrap-lines")).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    // Exercise the renderer's COM selection against a virtual list, including a failed open.
+    const virtualPorts = [
+      { path: "COM240", label: "COM240", source: "serial" },
+      { path: "demo", label: "测试端口", source: "synthetic" },
+      { path: "COM241", label: "COM241", source: "serial" },
+    ];
+    await app.evaluate(({ ipcMain }, ports) => {
+      globalThis.fixturePorts = ports;
+      ipcMain.removeHandler("connect");
+      ipcMain.handle("connect", (_event, config) => {
+        if (config.target !== "COM241") throw Error("模拟端口忙");
+      });
+    }, virtualPorts);
+    await controls(page).locator("#refresh").click();
+    await controls(page).locator("#target").selectOption("COM241");
+    await controls(page).locator("#baud").fill("460800");
+    await controls(page).locator("#serial-parity").selectOption("odd");
+    await controls(page).locator("#serial-flow").selectOption("xonxoff");
+    await controls(page).locator("#serial-dtr").uncheck();
+    await controls(page).locator("#serial-rts").uncheck();
+    await controls(page).locator("#connection-close").click();
+    await controls(page).locator("#connect").click();
+    await controls(page).locator("#target").selectOption("demo");
+    await expect(controls(page).locator("#serial-parity")).toHaveValue("even");
+    await controls(page).locator("#target").selectOption("COM240");
+    await controls(page).locator("#connection-close").click();
+    await controls(page).locator("#connect").click();
+    await expect(controls(page).locator("#error")).toContainText("模拟端口忙");
+    await expect
+      .poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource))
+      .toBe("dark");
+    await page.locator("#appearance").click();
+    await expect
+      .poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource))
+      .toBe("light");
+    await app.close();
+    app = await launch();
+    const restarted = await app.firstWindow();
+    await app.evaluate(({ ipcMain }, ports) => {
+      globalThis.fixturePorts = ports.slice(0, 2);
+      ipcMain.removeHandler("ports");
+      ipcMain.handle("ports", () => globalThis.fixturePorts);
+    }, virtualPorts);
+    await expect(restarted.locator("#connection-options")).toBeVisible();
+    await expect(restarted.locator("html")).toHaveAttribute(
+      "data-theme",
+      "light",
+    );
+    await expect
+      .poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource))
+      .toBe("light");
+    await expect(restarted.locator("#target")).toHaveValue("COM241");
+    await expect(restarted.locator("#target option:checked")).toContainText(
+      "未检测到",
+    );
+    await expect(restarted.locator("#connect")).toBeDisabled();
+    await app.evaluate(
+      (_electron, port) => globalThis.fixturePorts.push(port),
+      virtualPorts[2],
+    );
+    await expect(restarted.locator("#connect")).toBeEnabled();
+    await expect(restarted.locator("#connection-state")).toHaveText("未连接");
+    await expect(restarted.locator("#baud")).toHaveValue("460800");
+    await expect(restarted.locator("#serial-dataBits")).toHaveValue("7");
+    await expect(restarted.locator("#serial-stopBits")).toHaveValue("2");
+    await expect(restarted.locator("#serial-parity")).toHaveValue("odd");
+    await expect(restarted.locator("#serial-flow")).toHaveValue("xonxoff");
+    await expect(restarted.locator("#serial-dtr")).not.toBeChecked();
+    await expect(restarted.locator("#serial-rts")).not.toBeChecked();
     assert.deepEqual(errors, []);
     console.log(
-      "PASS workflow desktop: serial settings, persisted profiles without sending, hotplug selection, scroll following/unread count, marks/time difference, plain log import, compact composer without scrollbars at 760px.",
+      "PASS workflow desktop: serial settings, last successful COM and per-port settings across restarts, missing and failed opens, persisted profiles without sending, hotplug selection, scroll following/unread count, marks/time difference, plain log import, compact composer without scrollbars at 760px.",
     );
   } finally {
     if (app) await app.close();

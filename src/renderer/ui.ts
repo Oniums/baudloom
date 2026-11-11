@@ -70,12 +70,16 @@ function currentFilter(): LogFilter {
     onlyMatches: el<HTMLInputElement>("filter-matches").checked,
   };
 }
-setupExport(api, () => ({
-  snapshot: latest,
-  mode: mode.value as "text" | "hex",
-  afterRowId: clearAt,
-  filter: currentFilter(),
-}));
+setupExport(
+  api,
+  () => logViewport.selectedText(),
+  () => ({
+    snapshot: latest,
+    mode: mode.value as "text" | "hex",
+    afterRowId: clearAt,
+    filter: currentFilter(),
+  }),
+);
 function updateMatchCount() {
   el("match-count").textContent = matches.length
     ? `${Math.max(0, matches.indexOf(activeMatch)) + 1} / ${matches.length} 个匹配行`
@@ -157,7 +161,6 @@ function freeze() {
   logViewport.setFollowing(false);
   el("pause").textContent = "继续跟随";
   el("pause").setAttribute("aria-pressed", "true");
-  renderedKey = "";
   if (latest) render(latest);
 }
 logViewport.onBrowse = freeze;
@@ -169,34 +172,20 @@ el("send-options").onclick = () =>
   el<HTMLDialogElement>("send-options-dialog").showModal();
 el("send-options-close").onclick = () =>
   el<HTMLDialogElement>("send-options-dialog").close();
-let measuredLabel = "";
-let measuredWidth = 280;
-const measurement = document.createElement("canvas").getContext("2d")!;
 function updateDeviceName() {
   const selected = ports.find((p) => p.path === target.value);
-  const label = selected?.label ?? "";
+  const label =
+    selected?.label ??
+    (target.value ? (target.selectedOptions[0]?.text ?? target.value) : "");
   target.title = label;
-  el("device-summary").textContent = label || "选择设备";
-  el("connection-options").title = label
-    ? `${label} · ${baud.value} baud · 点击设置`
-    : "选择设备与连接参数";
-  if (label !== measuredLabel) {
-    measuredLabel = label;
-    measurement.font = getComputedStyle(target).font;
-    measuredWidth = measurement.measureText(label).width + 44;
-    target.style.width = `${Math.min(440, Math.max(280, measuredWidth))}px`;
-  }
-  const width = measuredWidth;
-  const detail = el("device-name");
-  detail.textContent = label;
-  detail.hidden = width <= target.getBoundingClientRect().width + 1;
+  el("device-name").textContent = label || "未选择";
   sendPanel.setContext(latest, selected, busy);
   el<HTMLButtonElement>("connect").disabled =
     busy ||
     (!selected && latest?.state !== "connected") ||
     ["connecting", "stopping"].includes(latest?.state ?? "");
 }
-new ResizeObserver(updateDeviceName).observe(target);
+
 function failure(error: unknown) {
   uiError = error instanceof Error ? error.message : String(error);
   el("error").textContent = uiError;
@@ -281,6 +270,7 @@ function render(s: Snapshot) {
     offline: "离线阅读",
     error: "采集故障",
   };
+  el("connection-state").dataset.state = s.state;
   el("connection-state").textContent =
     `${names[s.state]}${s.source === "synthetic" && s.sessionId && s.fileKind !== "text" ? "（合成）" : ""}`;
   el("session-title").textContent =
@@ -395,6 +385,7 @@ async function poll() {
       ports.find((p) => p.path === target.value),
       busy,
     );
+    el("connection-state").dataset.state = "error";
     el("connection-state").textContent = "采集进程不可用";
   } finally {
     polling = false;
@@ -411,7 +402,9 @@ async function refresh() {
       target.options[0]?.text !== "正在枚举…"
     )
       return;
-    const selected = target.value;
+    const initial = target.options[0]?.text === "正在枚举…";
+    const selected =
+      target.value || (initial ? connectionPanel.lastPort() : "");
     const previous = ports.find((p) => p.path === selected);
     ports = discovered;
     target.replaceChildren(
@@ -427,6 +420,7 @@ async function refresh() {
       );
       target.value = selected;
     } else target.value = selected || ports[0]?.path || "";
+    if (initial) connectionPanel.restore(target.value);
     if (!target.options.length) target.add(new Option("未发现串口", ""));
     updateDeviceName();
   } finally {
@@ -443,7 +437,10 @@ el<HTMLInputElement>("save-session").onchange = () => {
   } else if (latest) render(latest);
 };
 el("refresh").onclick = () => void action(refresh);
-target.onchange = updateDeviceName;
+target.onchange = () => {
+  connectionPanel.restore(target.value);
+  updateDeviceName();
+};
 el("connect").onclick = () =>
   void action(async () => {
     if (latest?.state === "connected") {
@@ -453,17 +450,15 @@ el("connect").onclick = () =>
     const port = ports.find((p) => p.path === target.value);
     if (!port) throw Error("请选择有效设备");
     const baudRate = parseBaudRate(baud.value);
+    const serial = connectionPanel.read();
     await api.connect({
       target: port.path,
       source: port.source,
       baudRate,
-      serial: connectionPanel.read(),
+      serial,
       saveSession: el<HTMLInputElement>("save-session").checked,
     });
-    try {
-      localStorage.setItem("baudloom.baud.v1", String(baudRate));
-      connectionPanel.remember();
-    } catch {}
+    connectionPanel.remember({ path: port.path, baudRate, serial });
   });
 el("pause").onclick = () => {
   paused = !paused;
@@ -474,9 +469,7 @@ el("pause").onclick = () => {
   renderedKey = "";
   if (latest) render(latest);
 };
-el("back-to-latest").onclick = () => {
-  search.value = "";
-  el<HTMLInputElement>("search-exclude").value = "";
+function resumeFollowing() {
   paused = false;
   frozen = null;
   renderedKey = "";
@@ -484,6 +477,15 @@ el("back-to-latest").onclick = () => {
   el("pause").textContent = "暂停滚动";
   el("pause").setAttribute("aria-pressed", "false");
   if (latest) render(latest);
+}
+logViewport.onReachTail = () => {
+  if (paused && !search.value && !el<HTMLInputElement>("search-exclude").value)
+    resumeFollowing();
+};
+el("back-to-latest").onclick = () => {
+  search.value = "";
+  el<HTMLInputElement>("search-exclude").value = "";
+  resumeFollowing();
 };
 el("clear").onclick = () => {
   clearAt = latest?.totalRows ?? 0;
@@ -513,7 +515,7 @@ mode.onchange = () => {
 el("mark").onclick = () => void action(() => api.mark("手工标记"));
 el("history").onclick = () =>
   void action(async () => {
-    el("history").textContent = "读取中…";
+    el("history-label").textContent = "读取中…";
     try {
       const s = await api.openSession();
       if (s) {
@@ -521,7 +523,7 @@ el("history").onclick = () =>
         render(s);
       }
     } finally {
-      el("history").textContent = "打开日志";
+      el("history-label").textContent = "打开日志";
     }
   });
 el("directory").onclick = () =>

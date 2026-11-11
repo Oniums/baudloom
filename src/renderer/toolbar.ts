@@ -1,5 +1,25 @@
 /** Keep infrequent receive actions in one dismissible menu at every window size. */
 export function setupToolbar() {
+  const focusLog = document.getElementById("focus-log")!;
+  focusLog.onclick = () => {
+    const focused = document.body.classList.toggle("log-only");
+    focusLog.setAttribute("aria-pressed", String(focused));
+    focusLog.textContent = focused ? "退出专注" : "专注";
+    focusLog.title = focused ? "恢复发送区" : "收起发送区，专注日志";
+  };
+  const appearance = document.getElementById("appearance")!;
+  function applyTheme(light: boolean) {
+    const theme = light ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    void window.baudloom.setAppearance(theme).catch(console.error);
+    appearance.setAttribute("aria-pressed", String(light));
+  }
+  applyTheme(localStorage.getItem("baudloom.appearance") === "light");
+  appearance.onclick = () => {
+    const light = document.documentElement.dataset.theme !== "light";
+    applyTheme(light);
+    localStorage.setItem("baudloom.appearance", light ? "light" : "dark");
+  };
   const more = document.getElementById("more-tools")!;
   const menu = document.getElementById("more-tools-panel")!;
   menu.addEventListener("beforetoggle", (event) => {

@@ -1,3 +1,4 @@
+import { MAX_COMMAND_SLOTS } from "../send-tools";
 import { serialSettings, serialSummary } from "../serial-settings";
 import { readTextLog } from "./text-import";
 import { extname } from "node:path";
@@ -225,10 +226,12 @@ export class Capture {
       request.intervalMs > 3600000 ||
       !Array.isArray(request.commands) ||
       !request.commands.length ||
-      request.commands.length > 12 ||
+      request.commands.length > MAX_COMMAND_SLOTS ||
       (request.kind === "single" && request.commands.length !== 1)
     )
-      throw Error("请选择 1–12 条有效命令，间隔为 100–3600000 ms");
+      throw Error(
+        `请选择 1–${MAX_COMMAND_SLOTS} 条有效命令，间隔为 100–3600000 ms`,
+      );
     const commands = request.commands.map((command) => {
       if (
         !command ||

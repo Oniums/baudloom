@@ -8,8 +8,6 @@ interface Preferences {
   wrapLines: boolean;
   showTime: boolean;
   showDirection: boolean;
-  timeWidth: number;
-  directionWidth: number;
   fontSize: number;
   limits: ViewLimits;
 }
@@ -23,8 +21,6 @@ export function setupViewControls(
     wrapLines: true,
     showTime: true,
     showDirection: true,
-    timeWidth: 110,
-    directionWidth: 36,
     fontSize: 14,
     limits: { ...DEFAULT_VIEW_LIMITS },
   };
@@ -32,11 +28,7 @@ export function setupViewControls(
     const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
     for (const field of ["showTime", "showDirection", "wrapLines"] as const)
       if (typeof saved[field] === "boolean") prefs[field] = saved[field];
-    for (const [field, min, max] of [
-      ["timeWidth", 64, 320],
-      ["directionWidth", 30, 160],
-      ["fontSize", 10, 28],
-    ] as const)
+    for (const [field, min, max] of [["fontSize", 10, 28]] as const)
       if (
         Number.isFinite(saved[field]) &&
         saved[field] >= min &&
@@ -63,14 +55,7 @@ export function setupViewControls(
     main.classList.toggle("no-wrap", !prefs.wrapLines);
     main.classList.toggle("hide-time", !prefs.showTime);
     main.classList.toggle("hide-direction", !prefs.showDirection);
-    main.style.setProperty("--time-width", `${prefs.timeWidth}px`);
-    main.style.setProperty("--direction-width", `${prefs.directionWidth}px`);
     main.style.setProperty("--log-font-size", `${prefs.fontSize}px`);
-    for (const [id, field] of [
-      ["time-resizer", "timeWidth"],
-      ["direction-resizer", "directionWidth"],
-    ] as const)
-      get(id).setAttribute("aria-valuenow", String(Math.round(prefs[field])));
     onGeometry();
   }
   function estimate() {
@@ -143,56 +128,6 @@ export function setupViewControls(
   dialog.addEventListener("close", () =>
     toggle.setAttribute("aria-expanded", "false"),
   );
-  for (const [id, field, min, max] of [
-    ["time-resizer", "timeWidth", 64, 320],
-    ["direction-resizer", "directionWidth", 30, 160],
-  ] as const) {
-    const handle = get<HTMLElement>(id);
-    let origin = 0,
-      size = 0,
-      dragging = false;
-    const change = (value: number) => {
-      prefs[field] = Math.max(min, Math.min(max, value));
-      apply();
-    };
-    handle.onpointerdown = (event) => {
-      if (event.button !== 0) return;
-      origin = event.clientX;
-      size = prefs[field];
-      dragging = true;
-      handle.setPointerCapture(event.pointerId);
-      event.preventDefault();
-    };
-    handle.onpointermove = (event) => {
-      if (dragging) change(size + event.clientX - origin);
-    };
-    const finish = () => {
-      if (dragging) {
-        dragging = false;
-        save();
-      }
-    };
-    handle.onpointerup =
-      handle.onpointercancel =
-      handle.onlostpointercapture =
-        finish;
-    handle.ondblclick = () => {
-      change(field === "timeWidth" ? 110 : 36);
-      save();
-    };
-    handle.onkeydown = (event) => {
-      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
-      event.preventDefault();
-      change(
-        event.key === "Home"
-          ? field === "timeWidth"
-            ? 110
-            : 36
-          : prefs[field] + (event.key === "ArrowRight" ? 8 : -8),
-      );
-      save();
-    };
-  }
   apply();
   estimate();
   return { limits: prefs.limits };

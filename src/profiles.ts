@@ -1,6 +1,7 @@
 import { parseBaudRate } from "./baud-rate";
 import { serialSettings, type SerialSettings } from "./serial-settings";
 import {
+  MAX_COMMAND_SLOTS,
   restoreSendTools,
   isCommandDraft,
   checksumSettings,
@@ -26,7 +27,7 @@ export function validateProfile(input: DeviceProfile): DeviceProfile {
     !isCommandDraft(input.draft) ||
     !Array.isArray(input.commands) ||
     input.commands.length < 1 ||
-    input.commands.length > 12 ||
+    input.commands.length > MAX_COMMAND_SLOTS ||
     input.commands.some(
       (c) =>
         !isCommandDraft(c) ||
@@ -59,9 +60,10 @@ export function validateProfile(input: DeviceProfile): DeviceProfile {
     multiInterval: input.multiInterval,
   };
 }
+export const MAX_PROFILE_STORAGE = 4 * 1024 * 1024;
 export function readProfiles(raw: string | null): DeviceProfile[] {
   if (!raw) return [];
-  if (raw.length > 4 * 1024 * 1024) throw Error("配置文件过大");
+  if (raw.length > MAX_PROFILE_STORAGE) throw Error("配置文件过大");
   const input = JSON.parse(raw);
   if (
     input?.version !== 1 ||

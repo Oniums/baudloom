@@ -4,7 +4,12 @@ import {
   serialSummary,
   type SerialSettings,
 } from "../serial-settings";
-import { readProfiles, validateProfile } from "../profiles";
+import { parseBaudRate } from "../baud-rate";
+import {
+  MAX_PROFILE_STORAGE,
+  readProfiles,
+  validateProfile,
+} from "../profiles";
 import type { Snapshot } from "../shared";
 import type { SendPanel } from "./send-panel";
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -31,6 +36,26 @@ export function setupConnectionPanel(
         localStorage.getItem("baudloom.serial.v1") ?? JSON.stringify(saved),
       ),
     );
+  } catch {}
+  type PortConfig = { path: string; baudRate: number; serial: SerialSettings };
+  const memoryKey = "baudloom.port-configs.v1";
+  let recent: PortConfig[] = [];
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(memoryKey) ?? "[]");
+    if (Array.isArray(stored)) {
+      for (const entry of stored) {
+        if (typeof entry?.path !== "string" || !entry.path) continue;
+        try {
+          recent.push({
+            path: entry.path,
+            baudRate: parseBaudRate(String(entry.baudRate)),
+            serial: serialSettings(entry.serial),
+          });
+        } catch {
+          /* Skip only the damaged entry. */
+        }
+      }
+    }
   } catch {}
   let profiles: ReturnType<typeof readProfiles> = [];
   try {
@@ -81,10 +106,10 @@ export function setupConnectionPanel(
     el<HTMLSelectElement>("profile-list").value = selected;
   }
   function store(next: typeof profiles) {
-    localStorage.setItem(
-      "baudloom.profiles.v1",
-      JSON.stringify({ version: 1, profiles: next }),
-    );
+    const serialized = JSON.stringify({ version: 1, profiles: next });
+    if (serialized.length > MAX_PROFILE_STORAGE)
+      throw Error("配置容量已满，请精简命令或删除不用的配置");
+    localStorage.setItem("baudloom.profiles.v1", serialized);
     profiles = next;
   }
   el("connection-options").onclick = () => {
@@ -160,9 +185,22 @@ export function setupConnectionPanel(
   return {
     read,
     update,
-    remember: () => {
+    lastPort: () => recent[0]?.path ?? "",
+    restore(path: string) {
+      const config = recent.find((entry) => entry.path === path);
+      if (!config) return;
+      baud.value = String(config.baudRate);
+      baud.dispatchEvent(new Event("input"));
+      saved = config.serial;
+      fill(saved);
+    },
+    remember(config: PortConfig) {
+      recent = [
+        config,
+        ...recent.filter((entry) => entry.path !== config.path),
+      ];
       try {
-        localStorage.setItem("baudloom.serial.v1", JSON.stringify(read()));
+        localStorage.setItem(memoryKey, JSON.stringify(recent));
       } catch (e) {
         failure(e);
       }
