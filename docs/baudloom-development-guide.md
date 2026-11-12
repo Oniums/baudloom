@@ -9,7 +9,7 @@
 - `tests`：核心行为测试及 Electron 桌面测试。
 - `assets/brand`：原创图标源稿及生成结果。
 
-渲染器启用 context isolation 和 sandbox，关闭 Node integration；仅通过固定 preload 接口调用主进程。IPC 校验来源，页面不加载远程内容。采集进程与界面分离；刷新不关闭连接，但会取消定时发送。
+渲染器启用 context isolation 和 sandbox，关闭 Node integration；仅通过固定 preload 接口调用主进程。IPC 校验来源，页面不加载远程内容。每个串口标签页使用独立 WebContentsView 和采集进程，IPC 按来源标签页路由；刷新不关闭连接，但会取消定时发送。
 
 ## 构建与测试
 
@@ -36,7 +36,7 @@ Windows 单文件输出为 `artifacts/Baudloom.exe`（内部版本仍随发布�
 
 从 0.1.3 起使用 ASAR 合并应用文件，`.node` 原生绑定保留为实际文件；Electron 只保留 `zh-CN` 和 `en-US` 语言资源。便携包启用 `useZip`，使用 NSIS 内置 zlib 直接解包，避免先提取 7z、再解压、再复制的路径；每次启动分配独立 TEMP 目录，退出清理。本方案仍需每次解包，包体积比 0.1.2 大。参考 [Electron ASAR](https://www.electronjs.org/docs/latest/tutorial/asar-archives) 与 [portable 配置](https://www.electron.build/docs/api/app-builder-lib.interface.portableoptions/)。
 
-窗口创建不等待偏好文件和采集进程启动；IPC 请求仍等待采集初始化，避免向未创建的进程发送。初始视图、设备枚举和目录显示分别加载，枚举慢时不阻挡首个视图。
+启动时读取会话目录偏好，每个新标签页用当前默认目录启动自己的采集进程。初始视图、设备枚举和目录显示分别加载，枚举慢时不阻挡首个视图。
 
 `snapshot` 不带游标时返回完整视图；界面轮询携带会话、格式、最后行号和修订号，返回新增/变化尾部以及首行号、总缓存行数。未终止片段使用原行号替换，缓存淘汰同步删除头部；格式切换或会话变化自动返回全量。游标只影响显示传输，不影响原始事件。界面丢弃过期格式/视图请求，空闲时复用行数组。连接状态轮询间隔为上次请求完成后 100 ms，未连接或后台为 1000 ms，不并发积压。
 

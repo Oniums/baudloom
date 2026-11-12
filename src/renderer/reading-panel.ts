@@ -14,6 +14,7 @@ export function setupReading(
   const choices = el<HTMLSelectElement>("mark-list");
   el("reading-options").onclick = () => {
     el("reading-panel").hidden = !el("reading-panel").hidden;
+    if (!el("reading-panel").hidden) refreshMarks();
     el("reading-options").setAttribute(
       "aria-expanded",
       String(!el("reading-panel").hidden),
@@ -65,7 +66,25 @@ export function setupReading(
       first = null;
     }
   });
-  let signature = "";
+  let signature: string | null = null;
+  function refreshMarks() {
+    marks = rows.filter((r) => r.dir === "MARK");
+    const nextSignature = marks.map((r) => r.id).join(",");
+    if (signature !== nextSignature) {
+      signature = nextSignature;
+      const old = choices.value;
+      choices.replaceChildren(
+        new Option(`缓存内标记（${marks.length}）`, ""),
+        ...marks.map(
+          (r) => new Option(`#${r.id} ${r.text.slice(0, 65)}`, String(r.id)),
+        ),
+      );
+      if (marks.some((r) => String(r.id) === old)) choices.value = old;
+    }
+    el<HTMLButtonElement>("mark-prev").disabled = el<HTMLButtonElement>(
+      "mark-next",
+    ).disabled = !marks.length;
+  }
   return {
     update(next: LogRow[], key: string) {
       rows = next;
@@ -74,24 +93,9 @@ export function setupReading(
         first = null;
         selectRows([]);
         el("time-difference").textContent = "";
-        signature = "";
+        signature = null;
       }
-      marks = rows.filter((r) => r.dir === "MARK");
-      const nextSignature = marks.map((r) => r.id).join(",");
-      if (signature !== nextSignature) {
-        signature = nextSignature;
-        const old = choices.value;
-        choices.replaceChildren(
-          new Option(`缓存内标记（${marks.length}）`, ""),
-          ...marks.map(
-            (r) => new Option(`#${r.id} ${r.text.slice(0, 65)}`, String(r.id)),
-          ),
-        );
-        if (marks.some((r) => String(r.id) === old)) choices.value = old;
-      }
-      el<HTMLButtonElement>("mark-prev").disabled = el<HTMLButtonElement>(
-        "mark-next",
-      ).disabled = !marks.length;
+      if (!el("reading-panel").hidden) refreshMarks();
     },
   };
 }

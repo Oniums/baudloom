@@ -12,43 +12,73 @@
   </head>
   <body>
     <div class="app">
-      <header class="titlebar">
-        <select id="target" aria-label="串口">
-          <option value="">正在枚举…</option>
-        </select>
-        <button
-          id="connection-options"
-          aria-label="串口参数设置"
-          title="串口参数与常用配置"
-        >
-          设置
-        </button>
-        <span id="serial-summary" aria-label="串口参数">8N1</span>
-        <span id="connection-state" role="status">未连接</span
-        ><button id="connect" disabled>连接</button>
-        <nav aria-label="会话工具">
-          <button id="history" title="打开日志">
-            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M3 7V5h7l2 2h8v3 M3 9h19l-3 10H3z" /></svg
-            ><span id="history-label">打开日志</span></button
-          ><button id="export-log" title="导出日志">
-            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M12 15V3m-4 4 4-4 4 4 M4 13v7h16v-7" /></svg
-            ><span>导出日志</span></button
-          ><button
-            id="appearance"
-            aria-label="浅色外观"
-            aria-pressed="false"
-            title="浅色外观"
+      <div class="session-header">
+        <div class="tab-bar" role="navigation" aria-label="串口会话">
+          <button
+            id="tabs-before"
+            class="tab-scroll"
+            aria-label="向左查看标签"
+            title="向左查看标签"
+            hidden
           >
-            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
-              <path
-                d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2 M16 12a4 4 0 1 1-8 0 4 4 0 1 1 8 0"
-              /></svg
-            ><span>浅色外观</span>
+            ‹
           </button>
-        </nav>
-      </header>
+          <div id="serial-tabs" role="tablist" aria-label="串口标签页"></div>
+          <button
+            id="tabs-after"
+            class="tab-scroll"
+            aria-label="向右查看标签"
+            title="向右查看标签"
+            hidden
+          >
+            ›
+          </button>
+          <button
+            id="add-tab"
+            title="新建串口标签页 (Ctrl+T)"
+            aria-label="新建串口标签页"
+          >
+            ＋
+          </button>
+        </div>
+        <header class="titlebar">
+          <select id="target" aria-label="串口">
+            <option value="">正在枚举…</option>
+          </select>
+          <button
+            id="connection-options"
+            aria-label="串口参数设置"
+            title="串口参数与常用配置"
+          >
+            设置
+          </button>
+          <span id="serial-summary" aria-label="串口参数">8N1</span>
+          <span id="connection-state" role="status">未连接</span
+          ><button id="connect" disabled>连接</button>
+          <nav aria-label="会话工具">
+            <button id="history" title="打开日志">
+              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M3 7V5h7l2 2h8v3 M3 9h19l-3 10H3z" /></svg
+              ><span id="history-label">打开日志</span></button
+            ><button id="export-log" title="导出日志">
+              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M12 15V3m-4 4 4-4 4 4 M4 13v7h16v-7" /></svg
+              ><span>导出日志</span></button
+            ><button
+              id="appearance"
+              aria-label="浅色外观"
+              aria-pressed="false"
+              title="浅色外观"
+            >
+              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path
+                  d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2 M16 12a4 4 0 1 1-8 0 4 4 0 1 1 8 0"
+                /></svg
+              ><span>浅色外观</span>
+            </button>
+          </nav>
+        </header>
+      </div>
       <div id="ports-note" role="status" hidden=""></div>
       <div id="error" role="alert" hidden=""></div>
       <div id="notice" role="status" hidden=""></div>
@@ -271,6 +301,18 @@
         视图设置</button
       ><button id="reading-options" aria-expanded="false">标记与计时</button>
     </div>
+    <dialog
+      id="close-dialog"
+      aria-labelledby="close-title"
+      aria-describedby="close-sessions"
+    >
+      <h2 id="close-title"></h2>
+      <div id="close-sessions"></div>
+      <form method="dialog" class="dialog-actions">
+        <button value="cancel" autofocus>取消</button>
+        <button id="close-confirm" value="confirm" class="primary"></button>
+      </form>
+    </dialog>
     <dialog id="status-dialog" aria-labelledby="status-title">
       <h2 id="status-title">记录详情</h2>
       <div class="settings-row">

@@ -913,6 +913,39 @@ dialog h2 {
   gap: 8px;
   margin-top: 24px;
 }
+#close-dialog {
+  width: min(390px, calc(100vw - 48px));
+}
+#close-sessions {
+  max-height: 40vh;
+  overflow: auto;
+}
+#close-sessions section + section {
+  border-top: 1px solid var(--rule);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+#close-sessions h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+#close-sessions ul {
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  gap: 3px 8px;
+  margin: 0;
+  padding: 0;
+  color: var(--secondary);
+}
+#close-sessions li {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+#close-sessions li:not(:last-child)::after {
+  content: "、";
+}
 
 /* Keep the send surface fixed; less-used controls live in their own dialog. */
 .composer {
@@ -1950,10 +1983,9 @@ textarea {
   user-select: text;
 }
 .titlebar #target {
-  flex: 0 1 auto;
-  width: auto;
-  min-width: 85px;
-  max-width: min(36vw, 420px);
+  flex: none;
+  width: min(30vw, 228px);
+  text-overflow: ellipsis;
   height: 28px;
 }
 .titlebar #connection-options {
@@ -2042,4 +2074,101 @@ main.no-wrap #log :is(.log-row, .selection-chunk) {
 .titlebar #serial-summary {
   font-variant-numeric: tabular-nums;
   color: var(--secondary);
+}
+
+.session-header {
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.session-header .titlebar {
+  height: 36px;
+  border-bottom: 0;
+}
+.tab-bar {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 9px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  user-select: none;
+}
+@media (min-width: 1200px) {
+  .session-header {
+    display: grid;
+    grid-template-columns: clamp(250px, 26vw, 460px) minmax(0, 1fr);
+    align-items: center;
+    min-height: 42px;
+  }
+  .tab-bar {
+    border-bottom: none;
+    border-right: 1px solid var(--rule);
+  }
+}
+#serial-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.serial-tab {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.serial-tab.active {
+  background: var(--panel);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+.tab-scroll {
+  flex: none;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  font-size: 17px;
+  color: var(--secondary);
+}
+.tab-scroll:disabled {
+  opacity: 0.32;
+}
+.serial-tab button,
+#add-tab {
+  height: 24px;
+  border: 0;
+  line-height: 1;
+}
+.serial-tab [role="tab"] {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.serial-tab .connected::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+}
+.close-tab,
+#add-tab {
+  width: 24px;
+  flex: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.serial-tab button:focus-visible {
+  outline-offset: -2px;
 }

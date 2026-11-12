@@ -121,6 +121,11 @@ export async function listPorts(includeSynthetic = false): Promise<Port[]> {
             label: "测试端口（合成数据）",
             source: "synthetic" as const,
           },
+          {
+            path: "demo-2",
+            label: "测试端口 2（合成数据）",
+            source: "synthetic" as const,
+          },
         ]
       : []),
     ...ports.map((p) => ({

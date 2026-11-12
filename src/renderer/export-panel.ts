@@ -1,13 +1,12 @@
-import type { Api, Snapshot } from "../shared";
+import type { Api, Snapshot, ClearBoundary } from "../shared";
 import type { LogFilter } from "../log-search";
 
 export function setupExport(
   api: Api,
   selectedText: () => string,
-  context: () => {
+  context: () => ClearBoundary & {
     snapshot: Snapshot | null;
     mode: "text" | "hex";
-    afterRowId: number;
     filter: LogFilter;
   },
 ) {
@@ -78,6 +77,7 @@ export function setupExport(
         sessionId: captured.snapshot?.sessionId ?? "",
         mode: captured.mode,
         afterRowId: captured.afterRowId,
+        partial: captured.partial,
         selection,
         timestamps: get<HTMLInputElement>("export-time").checked,
         direction: get<HTMLInputElement>("export-direction").checked,

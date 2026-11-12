@@ -31,6 +31,7 @@ jobs:
           node tests/desktop-smoke.cjs
           node tests/workflow-desktop.cjs
           node tests/two-pane-desktop.cjs
+          node tests/tabs-desktop.cjs
       - uses: actions/upload-artifact@v7
         with:
           name: baudloom-windows-x64

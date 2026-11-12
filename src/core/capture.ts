@@ -83,7 +83,8 @@ export class Capture {
       config.target.length > 1024 ||
       config.target.includes("\0") ||
       !validBaudRate(config.baudRate) ||
-      (config.source === "synthetic" && config.target !== "demo")
+      (config.source === "synthetic" &&
+        !["demo", "demo-2"].includes(config.target))
     )
       return Promise.reject(Error("无效串口参数"));
     if (["connected", "connecting", "stopping"].includes(this.state))
@@ -502,6 +503,14 @@ export class Capture {
       this.exportController = undefined;
     }
   }
+  status() {
+    return {
+      fileKind: this.fileKind,
+      state: this.state,
+      target: this.config?.target ?? "",
+      sessionFile: this.journal?.file ?? this.offlineFile,
+    };
+  }
   snapshot(mode: "text" | "hex" = "text", cursor?: ViewCursor): Snapshot {
     const sessionId = this.connectionId || this.offlineFile;
     const reset =
@@ -521,13 +530,10 @@ export class Capture {
       !reset && cursor!.revision === this.view.revision,
     );
     return {
-      fileKind: this.fileKind,
+      ...this.status(),
       serial: this.config?.serial,
-      state: this.state,
       schedule: { ...this.schedule },
-      target: this.config?.target ?? "",
       source: this.config?.source ?? "synthetic",
-      sessionFile: this.journal?.file ?? this.offlineFile,
       currentSessionFile:
         this.journal instanceof Journal
           ? this.journal.currentFile
@@ -548,6 +554,7 @@ export class Capture {
           : this.droppedEvents,
       backfilledEvents: this.backfilledEvents,
       backfillActive: this.backfillActive,
+      clearBoundaries: this.view.clearBoundaries(),
       rows: view.rows,
       viewUpdate: {
         cursor: {

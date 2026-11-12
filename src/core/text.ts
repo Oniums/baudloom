@@ -22,23 +22,35 @@ export class LineDecoder {
   }
   private consume(text: string): string[] {
     const lines: string[] = [];
-    for (const char of text) {
-      if (char === "\n" && this.afterCR) {
-        this.afterCR = false;
-        continue;
-      }
-      this.afterCR = false;
-      if (char === "\r" || char === "\n") {
-        lines.push(this.partial);
-        this.partial = "";
-        this.afterCR = char === "\r";
-      } else {
-        this.partial += char;
-        if (this.partial.length >= this.max) {
+    if (!text) return lines;
+    const limit = Math.max(1, Math.ceil(this.max)) || Infinity;
+    let start = this.afterCR && text.startsWith("\n") ? 1 : 0;
+    this.afterCR = text.endsWith("\r");
+    const endings = /\r\n|[\r\n]/g;
+    endings.lastIndex = start;
+    for (;;) {
+      const ending = endings.exec(text);
+      const end = ending?.index ?? text.length;
+      while (start < end) {
+        let cut = Math.min(end, start + limit - this.partial.length);
+        // A code point can cross the UTF-16 length limit by one code unit.
+        if (
+          cut < end &&
+          text.charCodeAt(cut) >= 0xdc00 &&
+          text.charCodeAt(cut) <= 0xdfff
+        )
+          cut++;
+        this.partial += text.slice(start, cut);
+        start = cut;
+        if (this.partial.length >= limit) {
           lines.push(this.partial);
           this.partial = "";
         }
       }
+      if (!ending) break;
+      lines.push(this.partial);
+      this.partial = "";
+      start = endings.lastIndex;
     }
     return lines;
   }

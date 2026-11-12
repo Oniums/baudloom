@@ -1,6 +1,6 @@
 {
   "name": "baudloom",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "A local serial workbench with durable session records",
   "main": "dist/desktop/main.cjs",
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "start": "npm run build && electron .",
-    "test:desktop": "npm run build && node tests/desktop-smoke.cjs && node tests/workflow-desktop.cjs && node tests/two-pane-desktop.cjs",
+    "test:desktop": "npm run build && node tests/desktop-smoke.cjs && node tests/workflow-desktop.cjs && node tests/two-pane-desktop.cjs && node tests/tabs-desktop.cjs",
     "package:linux": "npm run build && node scripts/package.mjs linux",
     "package:win": "npm run build && node scripts/package.mjs win32",
     "format": "prettier --write \"src/**/*.{ts,html,css}\" \"tests/*.{ts,cjs}\" \"scripts/*.mjs\" package.json tsconfig.json .github/workflows/verify.yml",

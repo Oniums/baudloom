@@ -3,9 +3,9 @@ import type { LogRow } from "../shared";
 /** Keep wrapped rows readable while mounting only the visible part of a larger cache. */
 export class LogViewport {
   private rows: LogRow[] = [];
-  private heights = new Map<number, { text: string; height: number }>();
+  private heights = new WeakMap<LogRow, number>();
   private offsets: number[] = [0];
-  private widths = new Map<number, { text: string; width: number }>();
+  private widths = new WeakMap<LogRow, number>();
   private measure = document.createElement("canvas").getContext("2d")!;
   private fontKey = "";
   private follow = true;
@@ -198,11 +198,6 @@ export class LogViewport {
     this.empty = empty;
     this.highlights = highlights;
     this.activeId = activeId;
-    const retained = new Set(rows.map((row) => row.id));
-    for (const id of this.heights.keys())
-      if (!retained.has(id)) this.heights.delete(id);
-    for (const id of this.widths.keys())
-      if (!retained.has(id)) this.widths.delete(id);
     this.reindex();
     this.signature = "";
     this.draw(true);
@@ -222,7 +217,7 @@ export class LogViewport {
   }
   refresh() {
     if (this.selecting) return;
-    this.heights.clear();
+    this.heights = new WeakMap();
     this.reindex();
     this.signature = "";
     this.draw(true);
@@ -249,49 +244,46 @@ export class LogViewport {
     const fontKey = `${style.fontSize} ${style.fontFamily}`;
     if (fontKey !== this.fontKey) {
       this.fontKey = fontKey;
-      this.widths.clear();
+      this.widths = new WeakMap();
     }
     this.measure.font = fontKey;
     let widest = 0;
-    this.offsets = [0];
+    this.offsets.length = this.rows.length + 1;
+    let index = 0,
+      bottom = 0;
     for (const row of this.rows) {
       if (!wrap) {
-        let width = this.widths.get(row.id);
-        if (!width || width.text !== row.text) {
+        let width = this.widths.get(row);
+        if (width === undefined) {
           // Measuring only new/changed rows keeps horizontal extent stable across virtualization.
-          width = {
-            text: row.text,
-            width: Math.max(
-              ...row.text
-                .split("\n")
-                .map(
-                  (s) =>
-                    this.measure.measureText(s.replace(/\t/g, "    ")).width,
-                ),
-            ),
-          };
-          this.widths.set(row.id, width);
+          width = Math.max(
+            ...row.text
+              .split("\n")
+              .map(
+                (s) => this.measure.measureText(s.replace(/\t/g, "    ")).width,
+              ),
+          );
+          this.widths.set(row, width);
         }
-        widest = Math.max(widest, width.width);
+        widest = Math.max(widest, width);
       }
-      const cached = this.heights.get(row.id);
       const height =
-        cached?.text === row.text
-          ? cached.height
-          : Math.max(
-              line,
-              (wrap
-                ? Math.ceil(
-                    Math.max(
-                      1,
-                      row.text.length +
-                        Number(this.showTime) * 15 +
-                        Number(this.showDirection) * 5,
-                    ) / chars,
-                  )
-                : row.text.split("\n").length) * line,
-            );
-      this.offsets.push(this.offsets.at(-1)! + height);
+        this.heights.get(row) ??
+        Math.max(
+          line,
+          (wrap
+            ? Math.ceil(
+                Math.max(
+                  1,
+                  row.text.length +
+                    Number(this.showTime) * 15 +
+                    Number(this.showDirection) * 5,
+                ) / chars,
+              )
+            : row.text.split("\n").length) * line,
+        );
+      bottom += height;
+      this.offsets[++index] = bottom;
     }
     const width = wrap
       ? available
@@ -368,12 +360,20 @@ export class LogViewport {
       fragment.append(p);
     }
     this.body.replaceChildren(fragment);
-    for (const { row, node } of nodes)
-      this.heights.set(row.id, {
-        text: row.text,
-        height: node.getBoundingClientRect().height,
-      });
-    this.reindex();
+    // Only mounted rows gained new measurements. Shift the remaining offsets
+    // by their combined correction instead of measuring the whole cache again.
+    const oldEnd = this.offsets[end];
+    for (let i = 0; i < nodes.length; i++) {
+      const { row, node } = nodes[i];
+      const height = node.getBoundingClientRect().height;
+      this.heights.set(row, height);
+      this.offsets[start + i + 1] = this.offsets[start + i] + height;
+    }
+    const shift = this.offsets[end] - oldEnd;
+    if (shift) {
+      for (let i = end + 1; i < this.offsets.length; i++)
+        this.offsets[i] += shift;
+    }
     this.top.style.height = `${this.offsets[start]}px`;
     this.bottom.style.height = `${this.offsets.at(-1)! - this.offsets[end]}px`;
     if (update && this.follow)

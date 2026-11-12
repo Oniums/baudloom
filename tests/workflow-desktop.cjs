@@ -210,8 +210,8 @@ const path = require("node:path");
       [760, 560],
     ]) {
       await app.evaluate(
-        ({ BrowserWindow }, size) =>
-          BrowserWindow.getAllWindows()[0].setContentSize(...size),
+        ({ BaseWindow }, size) =>
+          BaseWindow.getAllWindows()[0].setContentSize(...size),
         [width, height],
       );
       await expect
@@ -244,8 +244,8 @@ const path = require("node:path");
     await controls(page).locator("#command").fill("Hello device");
     await mkdir(".local/screenshots", { recursive: true });
     await page.screenshot({ path: ".local/screenshots/ui-polish-narrow.png" });
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].setContentSize(1280, 820),
+    await app.evaluate(({ BaseWindow }) =>
+      BaseWindow.getAllWindows()[0].setContentSize(1280, 820),
     );
     await mkdir(".local/screenshots", { recursive: true });
     await page.screenshot({ path: ".local/screenshots/v015-clean.png" });

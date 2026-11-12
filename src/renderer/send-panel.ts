@@ -31,7 +31,7 @@ export class SendPanel {
   private history = get<HTMLSelectElement>("send-history");
   private clearAfter = get<HTMLInputElement>("clear-after-send");
   private state: SendTools;
-  private target = "demo";
+  private target = "";
   private snapshot: Snapshot | null = null;
   private busy = false;
   private sending = false;
@@ -172,7 +172,10 @@ export class SendPanel {
   }
   private persist() {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(this.state));
+      localStorage.setItem(
+        this.target ? storageKey + ":" + this.target : storageKey,
+        JSON.stringify(this.state),
+      );
     } catch {
       this.failure(Error("发送工具设置未能保存，请检查本地存储空间"));
     }
@@ -236,6 +239,12 @@ export class SendPanel {
     if (port && this.target !== port.path) {
       this.drafts.set(this.target, this.current());
       this.target = port.path;
+      this.state = restoreSendTools(
+        localStorage.getItem(storageKey + ":" + this.target) ??
+          localStorage.getItem(storageKey),
+      );
+      this.clearAfter.checked = this.state.clearAfterSend;
+      this.renderSlots();
       this.fill(this.drafts.get(this.target) ?? blankCommand());
       this.renderHistory();
       get("send-result").textContent = "";

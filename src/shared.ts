@@ -1,11 +1,14 @@
 import type { SerialSettings } from "./serial-settings";
 import type { ViewLimits } from "./view-settings";
 import type { LogFilter } from "./log-search";
-export interface ExportRequest extends LogFilter {
+export interface ClearBoundary {
+  afterRowId: number;
+  partial?: { line: number; chars: number };
+}
+export interface ExportRequest extends LogFilter, ClearBoundary {
   scope: "cache" | "filtered" | "selection" | "session";
   sessionId: string;
   mode: "text" | "hex";
-  afterRowId: number;
   timestamps: boolean;
   direction: boolean;
   selection?: string;
@@ -45,6 +48,7 @@ export interface StoredEvent extends EventInput {
   baudRate: number;
 }
 export interface LogRow {
+  rxLine?: number;
   mono?: string;
   id: number;
   at: string;
@@ -58,6 +62,7 @@ export interface ViewCursor {
   revision: number;
 }
 export interface Snapshot {
+  clearBoundaries?: { text: ClearBoundary; hex: ClearBoundary };
   fileKind?: "session" | "text";
   serial?: SerialSettings;
   viewUpdate?: {
@@ -98,6 +103,7 @@ export interface Snapshot {
   schedule: ScheduleStatus;
 }
 export interface Port {
+  inUse?: boolean;
   path: string;
   label: string;
   source: Source;
@@ -135,7 +141,24 @@ export interface SendRequest {
   format: "text" | "hex";
   ending: "none" | "cr" | "lf" | "crlf";
 }
+export interface TabState {
+  foreground: boolean;
+  activeId: number;
+  tabs: { id: number; label: string; connected: boolean }[];
+}
+export interface ClosePrompt {
+  title: string;
+  confirm: string;
+  sessions: { target: string; detail: string }[];
+}
 export interface Api {
+  refreshTabStatus(): Promise<void>;
+  onClosePrompt(listener: (prompt: ClosePrompt) => Promise<boolean>): void;
+  tabState(): Promise<TabState>;
+  onTabsChanged(listener: (state: TabState) => void): void;
+  newTab(): Promise<void>;
+  selectTab(id: number): Promise<void>;
+  closeTab(id: number): Promise<void>;
   setAppearance(theme: "dark" | "light"): Promise<void>;
   ports(): Promise<Port[]>;
   connect(config: ConnectionConfig): Promise<void>;

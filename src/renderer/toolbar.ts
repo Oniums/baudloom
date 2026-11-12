@@ -15,6 +15,10 @@ export function setupToolbar() {
     appearance.setAttribute("aria-pressed", String(light));
   }
   applyTheme(localStorage.getItem("baudloom.appearance") === "light");
+  window.addEventListener("storage", (event) => {
+    if (event.key === "baudloom.appearance")
+      applyTheme(event.newValue === "light");
+  });
   appearance.onclick = () => {
     const light = document.documentElement.dataset.theme !== "light";
     applyTheme(light);

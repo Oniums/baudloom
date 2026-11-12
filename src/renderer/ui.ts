@@ -1,9 +1,11 @@
+import { setupTabs } from "./tabs";
 import { setupToolbar } from "./toolbar";
 import { setupConnectionPanel } from "./connection-panel";
 import { setupReading } from "./reading-panel";
 import { compileSearch, type LogFilter } from "../log-search";
 import { setupExport } from "./export-panel";
 import { BAUD_RATES, parseBaudRate } from "../baud-rate";
+import { rowsAfterClear } from "../clear-boundary";
 import { mergeSnapshot } from "../snapshot";
 import { setupViewControls } from "./view-controls";
 import { LogViewport } from "./log-viewport";
@@ -20,6 +22,38 @@ setupToolbar();
 const api = window.baudloom;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+api.onClosePrompt((prompt) => {
+  const dialog = el<HTMLDialogElement>("close-dialog");
+  el("close-title").textContent = prompt.title;
+  el("close-confirm").textContent = prompt.confirm;
+  const groups = new Map<string, HTMLUListElement>();
+  const sessions = el("close-sessions");
+  sessions.replaceChildren();
+  for (const { target, detail } of prompt.sessions) {
+    let ports = groups.get(detail);
+    if (!ports) {
+      const section = document.createElement("section");
+      const heading = document.createElement("h3");
+      heading.textContent = detail;
+      ports = document.createElement("ul");
+      section.append(heading, ports);
+      sessions.append(section);
+      groups.set(detail, ports);
+    }
+    const port = document.createElement("li");
+    port.textContent = target;
+    ports.append(port);
+  }
+  dialog.returnValue = "cancel";
+  dialog.showModal();
+  return new Promise<boolean>((resolve) =>
+    dialog.addEventListener(
+      "close",
+      () => resolve(dialog.returnValue === "confirm"),
+      { once: true },
+    ),
+  );
+});
 const target = el<HTMLSelectElement>("target"),
   baud = el<HTMLInputElement>("baud"),
   command = el<HTMLTextAreaElement>("command");
@@ -55,10 +89,16 @@ let paused = false;
 let frozen: Snapshot | null = null;
 let matches: number[] = [];
 let activeMatch = 0;
-let clearAt = 0;
+let cleared: Snapshot["clearBoundaries"];
+function clearBoundary() {
+  return cleared?.[mode.value as "text" | "hex"] ?? { afterRowId: 0 };
+}
 let session = "";
 let busy = false;
+let recordingRequestedFor: string | null = null;
 let polling = false;
+let foreground = true;
+let restartPolling: (() => void) | undefined;
 let renderedKey = "";
 let uiError = "";
 const logViewport = new LogViewport(el("log"));
@@ -76,7 +116,7 @@ setupExport(
   () => ({
     snapshot: latest,
     mode: mode.value as "text" | "hex",
-    afterRowId: clearAt,
+    ...clearBoundary(),
     filter: currentFilter(),
   }),
 );
@@ -147,7 +187,7 @@ const readingPanel = setupReading(
     freeze();
     search.value = "";
     el<HTMLInputElement>("search-exclude").value = "";
-    clearAt = 0;
+    cleared = undefined;
     renderedKey = "";
     if (latest) render(latest);
     logViewport.navigateTo(id);
@@ -178,11 +218,13 @@ function updateDeviceName() {
     selected?.label ??
     (target.value ? (target.selectedOptions[0]?.text ?? target.value) : "");
   target.title = label;
+  document.title =
+    latest?.state === "connected" ? `Baudloom · ${latest.target}` : "Baudloom";
   el("device-name").textContent = label || "未选择";
   sendPanel.setContext(latest, selected, busy);
   el<HTMLButtonElement>("connect").disabled =
     busy ||
-    (!selected && latest?.state !== "connected") ||
+    ((!selected || selected.inUse) && latest?.state !== "connected") ||
     ["connecting", "stopping"].includes(latest?.state ?? "");
 }
 
@@ -215,7 +257,7 @@ function render(s: Snapshot) {
     active = ["connecting", "connected", "stopping"].includes(s.state);
   if (session !== s.sessionId) {
     session = s.sessionId;
-    clearAt = 0;
+    cleared = undefined;
     paused = false;
     frozen = null;
     activeMatch = 0;
@@ -236,12 +278,16 @@ function render(s: Snapshot) {
   ].includes(s.state);
   target.disabled = active;
   const recording = el<HTMLInputElement>("save-session");
+  if (!connected || s.sessionFile || recordingRequestedFor !== s.sessionId)
+    recordingRequestedFor = null;
   recording.disabled =
     busy ||
+    recordingRequestedFor !== null ||
     ["connecting", "stopping"].includes(s.state) ||
     (connected && Boolean(s.sessionFile));
   if (active && s.state !== "connecting")
-    recording.checked = Boolean(s.sessionFile);
+    recording.checked =
+      Boolean(s.sessionFile) || recordingRequestedFor !== null;
   baud.disabled = active;
   presets.disabled = active;
   (el("refresh") as HTMLButtonElement).disabled = active;
@@ -329,12 +375,11 @@ function render(s: Snapshot) {
   const display = paused && frozen ? frozen : s;
   const filter = currentFilter();
   const query = filter.query;
-  const compiled = compileSearch(filter);
   const key = [
     display.sessionId,
     display.totalRows,
     display.rxBytes,
-    clearAt,
+    JSON.stringify(clearBoundary()),
     JSON.stringify(filter),
     mode.value,
     display.state,
@@ -344,10 +389,13 @@ function render(s: Snapshot) {
   ].join("|");
   if (key === renderedKey) return;
   renderedKey = key;
+  const compiled = compileSearch(filter);
   readingPanel.update(display.rows, display.sessionId + ":" + mode.value);
-  const rows = display.rows.filter(
-    (row) => row.id > clearAt && compiled.visible(row.text),
-  );
+  const retained = rowsAfterClear(display.rows, clearBoundary());
+  const rows =
+    filter.exclude || (compiled.active && filter.onlyMatches)
+      ? retained.filter((row) => compiled.visible(row.text))
+      : retained;
   matches = compiled.active
     ? rows.filter((row) => compiled.matches(row.text)).map((row) => row.id)
     : [];
@@ -375,7 +423,7 @@ async function poll() {
       requestedMode,
       previous?.viewUpdate?.cursor,
     );
-    if (mode.value === requestedMode && latest === previous)
+    if (foreground && mode.value === requestedMode && latest === previous)
       render(mergeSnapshot(previous, next));
   } catch (error) {
     failure(error);
@@ -404,12 +452,20 @@ async function refresh() {
       return;
     const initial = target.options[0]?.text === "正在枚举…";
     const selected =
-      target.value || (initial ? connectionPanel.lastPort() : "");
+      target.value ||
+      (initial
+        ? sessionStorage.getItem("baudloom.window-port") ||
+          connectionPanel.lastPort()
+        : "");
     const previous = ports.find((p) => p.path === selected);
     ports = discovered;
     target.replaceChildren(
       ...ports.map((p) => {
-        const o = new Option(p.label, p.path);
+        const o = new Option(
+          p.inUse ? `${p.label}（其他标签页使用中）` : p.label,
+          p.path,
+        );
+        o.disabled = Boolean(p.inUse);
         o.title = p.label;
         return o;
       }),
@@ -419,7 +475,13 @@ async function refresh() {
         new Option(`${previous?.label ?? selected}（未检测到）`, selected),
       );
       target.value = selected;
-    } else target.value = selected || ports[0]?.path || "";
+    } else
+      target.value =
+        (initial && ports.find((p) => p.path === selected)?.inUse
+          ? ""
+          : selected) ||
+        ports.find((p) => !p.inUse)?.path ||
+        "";
     if (initial) connectionPanel.restore(target.value);
     if (!target.options.length) target.add(new Option("未发现串口", ""));
     updateDeviceName();
@@ -433,11 +495,20 @@ el<HTMLInputElement>("save-session").onchange = () => {
     el<HTMLInputElement>("save-session").checked
   ) {
     const id = latest.sessionId;
-    void action(() => api.startRecording(id));
+    void action(async () => {
+      recordingRequestedFor = id;
+      try {
+        await api.startRecording(id);
+      } catch (error) {
+        recordingRequestedFor = null;
+        throw error;
+      }
+    });
   } else if (latest) render(latest);
 };
 el("refresh").onclick = () => void action(refresh);
 target.onchange = () => {
+  sessionStorage.setItem("baudloom.window-port", target.value);
   connectionPanel.restore(target.value);
   updateDeviceName();
 };
@@ -458,6 +529,7 @@ el("connect").onclick = () =>
       serial,
       saveSession: el<HTMLInputElement>("save-session").checked,
     });
+    sessionStorage.setItem("baudloom.window-port", port.path);
     connectionPanel.remember({ path: port.path, baudRate, serial });
   });
 el("pause").onclick = () => {
@@ -488,10 +560,9 @@ el("back-to-latest").onclick = () => {
   resumeFollowing();
 };
 el("clear").onclick = () => {
-  clearAt = latest?.totalRows ?? 0;
-  logViewport.set([], false, "已清屏，等待新记录");
-  renderedKey = "";
-  if (latest) render(latest);
+  const end = { afterRowId: latest?.totalRows ?? 0 };
+  cleared = latest?.clearBoundaries ?? { text: end, hex: end };
+  resumeFollowing();
 };
 search.oninput = () => {
   renderedKey = "";
@@ -504,7 +575,6 @@ for (const id of ["search-exclude", "match-case", "filter-matches"]) {
   });
 }
 mode.onchange = () => {
-  clearAt = 0;
   paused = false;
   frozen = null;
   el("pause").textContent = "暂停滚动";
@@ -534,6 +604,13 @@ el("directory").onclick = () =>
       el("directory-path").title = path;
     }
   });
+setupTabs(api, failure, (visible) => {
+  foreground = visible;
+  if (restartPolling) {
+    restartPolling();
+    if (visible) void refresh().catch(failure);
+  }
+});
 document.addEventListener("keydown", (e) => {
   if (e.isComposing) return;
   if (
@@ -576,17 +653,28 @@ void (async () => {
   } catch (error) {
     failure(error);
   }
-  const tick = async () => {
-    await poll();
-    setTimeout(
-      tick,
-      document.hidden || latest?.state !== "connected" ? 1000 : 100,
-    );
+  let generation = 0;
+  let timer = 0;
+  restartPolling = () => {
+    const epoch = ++generation;
+    window.clearTimeout(timer);
+    const tick = async () => {
+      if (foreground) await poll();
+      else await api.refreshTabStatus().catch(failure);
+      if (epoch === generation)
+        timer = window.setTimeout(
+          tick,
+          foreground && !document.hidden && latest?.state === "connected"
+            ? 100
+            : 1000,
+        );
+    };
+    void tick();
   };
-  void tick();
+  restartPolling();
   const watchPorts = async () => {
     try {
-      await refresh();
+      if (foreground) await refresh();
       el("ports-note").hidden = true;
     } catch {
       el("ports-note").hidden = false;

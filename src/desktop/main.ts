@@ -1,23 +1,27 @@
+import { startCaptureProcess } from "./capture-process";
 import {
   app,
-  BrowserWindow,
+  BaseWindow,
+  MessageChannelMain,
+  WebContentsView,
   dialog,
   ipcMain,
   nativeTheme,
-  utilityProcess,
-  type UtilityProcess,
+  type WebContents,
 } from "electron";
-import { join } from "node:path";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import type {
+  Port,
+  ClosePrompt,
+  ConnectionConfig,
+  Snapshot,
+  TabState,
+} from "../shared";
 import { storagePaths, prepareStorage } from "./storage";
 import { pathToFileURL } from "node:url";
 
-let window: BrowserWindow;
-let core: UtilityProcess;
-let coreReady = Promise.resolve();
-let quitReady = false;
-let closing = false;
-let coreError = "";
 const paths = storagePaths({
   override: process.env.BAUDLOOM_DATA_DIR,
   portableDir: process.env.PORTABLE_EXECUTABLE_DIR,
@@ -39,241 +43,424 @@ try {
   );
   app.exit(1);
 }
-let directory = "";
-let sequence = 0;
-const pending = new Map<
-  number,
-  {
-    resolve: (r: any) => void;
-    reject: (e: Error) => void;
-    timer: NodeJS.Timeout;
+
+const prefs = join(paths.profile, "preferences.json");
+const renderer = join(__dirname, "../renderer/index.html");
+const rendererUrl = pathToFileURL(renderer).href;
+let defaultDirectory = paths.sessions;
+let quitting = false;
+type Handler = (...args: any[]) => any;
+const routes = new Map<WebContents, Map<string, Handler>>();
+const channels = new Set<string>();
+const occupied = new Map<number, string>();
+const portKey = (path: string) =>
+  process.platform === "win32" ? path.toUpperCase() : path;
+
+function register(
+  channel: string,
+  handlers: Map<string, Handler>,
+  fn: Handler,
+) {
+  handlers.set(channel, fn);
+  if (channels.has(channel)) return;
+  channels.add(channel);
+  ipcMain.handle(channel, (event, ...args) => {
+    const handler = routes.get(event.sender)?.get(channel);
+    if (
+      !handler ||
+      event.senderFrame !== event.sender.mainFrame ||
+      event.senderFrame.url !== rendererUrl
+    )
+      throw Error("不受信任的界面请求");
+    return handler(...args);
+  });
+}
+
+type Tab = {
+  id: number;
+  view: WebContentsView;
+  label: string;
+  connected: boolean;
+  request: ReturnType<typeof startCaptureProcess>["request"];
+  dispose: () => void;
+};
+let window: BaseWindow;
+const tabs = new Map<number, Tab>();
+let activeId = 0;
+let closingWindow = false;
+let operations = Promise.resolve();
+
+function schedule(action: () => Promise<void>) {
+  const next = operations.then(action);
+  operations = next.catch(console.error);
+  return next;
+}
+function tabState(tabId: number): TabState {
+  return {
+    foreground: tabId === activeId,
+    activeId,
+    tabs: Array.from(tabs.values(), ({ id, label, connected }, index) => ({
+      id,
+      label: label || `串口 ${index + 1}`,
+      connected,
+    })),
+  };
+}
+function syncTabs() {
+  const state = tabState(activeId);
+  for (const tab of tabs.values()) {
+    if (!tab.view.webContents.isDestroyed())
+      tab.view.webContents.send("tabs-changed", {
+        ...state,
+        foreground: tab.id === activeId,
+      });
   }
->();
-async function request(method: string, ...args: unknown[]): Promise<any> {
-  await coreReady;
-  if (coreError) return Promise.reject(Error(coreError));
-  if (pending.size >= 32) return Promise.reject(Error("操作过多，请稍后重试"));
-  return new Promise((resolve, reject) => {
-    const id = ++sequence;
-    const timer = setTimeout(
-      () => {
-        pending.delete(id);
-        reject(Error("采集进程未及时响应，请检查状态后停止采集"));
-      },
-      ["open", "export"].includes(method) ? 30 * 60 * 1000 : 15000,
+  const active = tabs.get(activeId);
+  window.setTitle(
+    active?.connected ? `Baudloom · ${active.label}` : "Baudloom",
+  );
+}
+function sizeView(tab: Tab) {
+  const [width, height] = window.getContentSize();
+  tab.view.setBounds({ x: 0, y: 0, width, height });
+}
+function activate(id: number) {
+  const next = tabs.get(id);
+  if (!next || activeId === id) return;
+  const previous = tabs.get(activeId);
+  if (previous) previous.view.setVisible(false);
+  activeId = id;
+  sizeView(next);
+  next.view.setVisible(true);
+  next.view.webContents.focus();
+  syncTabs();
+}
+async function confirmStop(selected: Tab[], entireWindow: boolean) {
+  if (quitting) return true;
+  const states = await Promise.all(
+    selected.map((tab) => tab.request("status").catch(() => null)),
+  );
+  const live = states.filter(
+    (state) =>
+      state && ["connected", "connecting", "stopping"].includes(state.state),
+  );
+  if (!live.length || quitting) return true;
+  const prompt: ClosePrompt = {
+    title: entireWindow ? "断开串口并退出？" : "关闭串口标签页？",
+    confirm: entireWindow ? "断开并退出" : "断开并关闭",
+    sessions: live.map((state) => ({
+      target: state.target,
+      detail: state.sessionFile
+        ? "关闭前会写完会话文件"
+        : "未保存，关闭后日志将丢失",
+    })),
+  };
+  const contents = tabs.get(activeId)?.view.webContents;
+  if (!contents || contents.isDestroyed() || contents.isCrashed()) {
+    // A crashed workspace cannot present its dialog while the capture process is still live.
+    const answer = await dialog.showMessageBox(window, {
+      type: "question",
+      message: prompt.title,
+      detail: prompt.sessions
+        .map((s) => `${s.target} · ${s.detail}`)
+        .join("\n"),
+      buttons: ["取消", prompt.confirm],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    return answer.response === 1 || quitting;
+  }
+  return new Promise<boolean>((resolve) => {
+    const { port1, port2 } = new MessageChannelMain();
+    const show = () => contents.postMessage("close-prompt", prompt, [port2]);
+    const finish = (confirmed: boolean) => {
+      contents.off("did-finish-load", show);
+      contents.off("did-fail-load", cancel);
+      contents.off("did-start-loading", cancel);
+      contents.off("render-process-gone", cancel);
+      app.off("before-quit", quit);
+      port1.removeAllListeners();
+      port1.close();
+      resolve(confirmed);
+    };
+    const cancel = () => finish(false);
+    const quit = () => finish(true);
+    contents.once("did-start-loading", cancel);
+    contents.once("did-fail-load", cancel);
+    contents.once("render-process-gone", cancel);
+    app.once("before-quit", quit);
+    port1.once("message", (event) => finish(event.data === true));
+    port1.once("close", cancel);
+    port1.start();
+    if (contents.isLoadingMainFrame()) contents.once("did-finish-load", show);
+    else show();
+  });
+}
+async function stopTab(tab: Tab) {
+  await tab.request("cancelExport").catch(console.error);
+  await tab.request("stop").catch(console.error);
+}
+async function closeTab(id: number) {
+  const tab = tabs.get(id);
+  if (!tab || !(await confirmStop([tab], false))) return;
+  await stopTab(tab);
+  const ids = Array.from(tabs.keys());
+  const neighbor = ids[ids.indexOf(id) + 1] ?? ids[ids.indexOf(id) - 1];
+  tab.dispose();
+  if (!tabs.size) {
+    activeId = 0;
+    await createTab();
+  } else if (id === activeId) activate(neighbor);
+  else syncTabs();
+}
+async function createTab() {
+  let directory = defaultDirectory;
+  const view = new WebContentsView({
+    webPreferences: {
+      preload: join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const contents = view.webContents;
+  const tabId = contents.id;
+  view.setBackgroundColor(
+    nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#ffffff",
+  );
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-navigate", (event) => event.preventDefault());
+  const capture = startCaptureProcess(directory, () => occupied.delete(tabId));
+  const { request } = capture;
+  const handlers = new Map<string, Handler>();
+  routes.set(contents, handlers);
+  const handle = (channel: string, fn: Handler) =>
+    register(channel, handlers, fn);
+  function fromActive(action: () => Promise<void>) {
+    return schedule(async () => {
+      if (!closingWindow && activeId === tabId) await action();
+    });
+  }
+  handle("tab-state", () => tabState(tabId));
+  handle("tab-new", () => fromActive(createTab));
+  handle("tab-select", (id: number) => fromActive(async () => activate(id)));
+  handle("tab-close", (id: number) => fromActive(() => closeTab(id)));
+  function occupiedElsewhere(path: string) {
+    const key = portKey(path);
+    return Array.from(occupied).some(
+      ([id, value]) => id !== tabId && value === key,
     );
-    pending.set(id, { resolve, reject, timer });
+  }
+  handle("ports", async () => {
+    const ports: Port[] = await request("ports");
+    return ports.map((port) =>
+      occupiedElsewhere(port.path) ? { ...port, inUse: true } : port,
+    );
+  });
+  let leaseGeneration = 0;
+  handle("connect", async (config: ConnectionConfig) => {
+    if (typeof config?.target !== "string") throw Error("无效串口参数");
+    if (occupied.has(tabId)) throw Error("请先停止当前连接");
+    if (occupiedElsewhere(config.target))
+      throw Error("该串口已在其他标签页连接");
+    const generation = ++leaseGeneration;
+    occupied.set(tabId, portKey(config.target));
     try {
-      core.postMessage({ id, method, args });
+      await request("connect", config);
     } catch (error) {
-      clearTimeout(timer);
-      pending.delete(id);
-      reject(error);
+      if (generation === leaseGeneration) occupied.delete(tabId);
+      throw error;
     }
   });
+  handle("stop", async () => {
+    const generation = leaseGeneration;
+    await request("stop");
+    if (generation === leaseGeneration) occupied.delete(tabId);
+  });
+  function updateStatus(
+    state: Pick<Snapshot, "state" | "target" | "sessionFile">,
+    generation: number,
+  ) {
+    if (state.state === "error" && generation === leaseGeneration)
+      occupied.delete(tabId);
+    const label =
+      state.state === "offline" ? basename(state.sessionFile) : state.target;
+    const connected = state.state === "connected";
+    if (
+      tabs.has(tabId) &&
+      (label !== tab.label || connected !== tab.connected)
+    ) {
+      tab.label = label;
+      tab.connected = connected;
+      syncTabs();
+    }
+  }
+  handle("refresh-tab-status", async () => {
+    const generation = leaseGeneration;
+    updateStatus(await request("status"), generation);
+  });
+  handle("snapshot", async (...args) => {
+    const generation = leaseGeneration;
+    const state: Snapshot = await request("snapshot", ...args);
+    updateStatus(state, generation);
+    return state;
+  });
+  handle("set-appearance", (theme: unknown) => {
+    if (theme !== "dark" && theme !== "light") throw Error("无效的外观设置");
+    nativeTheme.themeSource = theme;
+    view.setBackgroundColor(theme === "dark" ? "#1e1e1e" : "#ffffff");
+    window.setBackgroundColor(theme === "dark" ? "#1e1e1e" : "#ffffff");
+  });
+  for (const method of [
+    "startRecording",
+    "setViewLimits",
+    "send",
+    "startSchedule",
+    "stopSchedule",
+    "mark",
+  ])
+    handle(method, (...args) => request(method, ...args));
+  handle("directory", async () => {
+    return directory;
+  });
+  handle("choose-directory", async () => {
+    const state = await request("snapshot");
+    if (["connecting", "connected", "stopping"].includes(state.state))
+      throw Error("请先断开设备");
+    const result = await dialog.showOpenDialog(window, {
+      title: "选择会话记录目录",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled) return null;
+    const selected = result.filePaths[0];
+    await request("directory", selected);
+    directory = selected;
+    writeFileSync(prefs, JSON.stringify({ directory }), { mode: 0o600 });
+    defaultDirectory = selected;
+    return directory;
+  });
+  let exporting = false;
+  handle("cancel-export", () => request("cancelExport"));
+  handle("export-log", async (options) => {
+    if (exporting) throw Error("已有导出正在进行");
+    exporting = true;
+    try {
+      const chosen = await dialog.showSaveDialog(window, {
+        title: "导出日志",
+        defaultPath: join(
+          directory,
+          `Baudloom-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+        ),
+        filters: [{ name: "文本日志", extensions: ["txt", "log"] }],
+      });
+      return chosen.canceled || !chosen.filePath
+        ? null
+        : await request("export", chosen.filePath, options);
+    } finally {
+      exporting = false;
+    }
+  });
+  handle("open-session", async () => {
+    const state = await request("snapshot");
+    if (["connecting", "connected", "stopping"].includes(state.state))
+      throw Error("请先断开设备");
+    const result = await dialog.showOpenDialog(window, {
+      title: "打开会话或文本日志",
+      properties: ["openFile"],
+      defaultPath: directory,
+      filters: [
+        { name: "会话与文本日志", extensions: ["jsonl", "txt", "log"] },
+      ],
+    });
+    return result.canceled ? null : request("open", result.filePaths[0]);
+  });
+  contents.on(
+    "did-start-loading",
+    () => void request("stopSchedule").catch(console.error),
+  );
+  contents.on(
+    "render-process-gone",
+    () => void request("stopSchedule").catch(console.error),
+  );
+
+  const tab: Tab = {
+    id: tabId,
+    view,
+    label: "",
+    connected: false,
+    request,
+    dispose() {
+      tabs.delete(tabId);
+      routes.delete(contents);
+      occupied.delete(tabId);
+      window.contentView.removeChildView(view);
+      contents.close();
+      capture.kill();
+    },
+  };
+  tabs.set(tabId, tab);
+  window.contentView.addChildView(view);
+  view.setVisible(false);
+  try {
+    await contents.loadFile(renderer);
+    activate(tabId);
+  } catch (error) {
+    tab.dispose();
+    syncTabs();
+    throw error;
+  }
+}
+
+async function createWindow() {
+  window = new BaseWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 760,
+    minHeight: 560,
+    title: "Baudloom",
+    icon: join(__dirname, "baudloom.png"),
+    show: false,
+    backgroundColor: "#1e1e1e",
+  });
+  window.setMenu(null);
+  window.on("resize", () => {
+    const active = tabs.get(activeId);
+    if (active) sizeView(active);
+  });
+  window.on("close", (event) => {
+    event.preventDefault();
+    if (closingWindow) return;
+    closingWindow = true;
+    void schedule(async () => {
+      try {
+        const all = [...tabs.values()];
+        if (!(await confirmStop(all, true))) return;
+        await Promise.all(all.map(stopTab));
+        for (const tab of all) tab.dispose();
+        window.destroy();
+      } finally {
+        closingWindow = false;
+      }
+    });
+  });
+  await createTab();
+  window.show();
 }
 app
   .whenReady()
   .then(async () => {
-    const prefs = join(app.getPath("userData"), "preferences.json");
-    directory = paths.sessions;
-    coreReady = (async () => {
-      try {
-        const data = JSON.parse(await readFile(prefs, "utf8"));
-        if (typeof data.directory === "string") directory = data.directory;
-      } catch {}
-      core = utilityProcess.fork(
-        join(__dirname, "../core/worker.cjs"),
-        [directory],
-        { serviceName: "Baudloom Capture", stdio: "pipe" },
-      );
-      core.on("message", (message: any) => {
-        const item = pending.get(message.id);
-        if (!item) return;
-        clearTimeout(item.timer);
-        pending.delete(message.id);
-        message.error
-          ? item.reject(Error(message.error))
-          : item.resolve(message.result);
-      });
-      core.on("exit", (code) => {
-        coreError = `采集进程已退出（${code}），连接已中断。若已启用保存，请重启应用后核对会话文件。`;
-        for (const item of pending.values()) {
-          clearTimeout(item.timer);
-          item.reject(Error(coreError));
-        }
-        pending.clear();
-      });
-      core.stderr?.on("data", (data) =>
-        console.error("[capture]", String(data)),
-      );
-    })();
-    void coreReady.catch((error) => {
-      coreError = String(error);
-      console.error(error);
-    });
-    const renderer = join(__dirname, "../renderer/index.html");
+    try {
+      const data = JSON.parse(await readFile(prefs, "utf8"));
+      if (typeof data.directory === "string") defaultDirectory = data.directory;
+    } catch {}
     nativeTheme.themeSource = "dark";
-    window = new BrowserWindow({
-      width: 1280,
-      height: 820,
-      minWidth: 760,
-      minHeight: 560,
-      title: "Baudloom",
-      icon: join(__dirname, "baudloom.png"),
-      show: false,
-      backgroundColor: "#1e1e1e",
-      webPreferences: {
-        preload: join(__dirname, "preload.cjs"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    });
-    window.setMenu(null);
-    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    window.webContents.on("will-navigate", (event) => event.preventDefault());
-    const handle = (channel: string, fn: (...args: any[]) => any) =>
-      ipcMain.handle(channel, (event, ...args) => {
-        if (
-          event.sender !== window.webContents ||
-          event.senderFrame !== window.webContents.mainFrame ||
-          event.senderFrame.url !== pathToFileURL(renderer).href
-        )
-          throw Error("不受信任的界面请求");
-        return fn(...args);
-      });
-    handle("set-appearance", (theme: unknown) => {
-      if (theme !== "dark" && theme !== "light") throw Error("无效的外观设置");
-      nativeTheme.themeSource = theme;
-      window.setBackgroundColor(theme === "dark" ? "#1e1e1e" : "#ffffff");
-    });
-    for (const method of [
-      "ports",
-      "connect",
-      "stop",
-      "startRecording",
-      "setViewLimits",
-      "send",
-      "snapshot",
-      "startSchedule",
-      "stopSchedule",
-      "mark",
-    ])
-      handle(method, (...args) => request(method, ...args));
-    handle("directory", async () => {
-      await coreReady;
-      return directory;
-    });
-    handle("choose-directory", async () => {
-      const state = await request("snapshot");
-      if (["connecting", "connected", "stopping"].includes(state.state))
-        throw Error("请先断开设备");
-      const result = await dialog.showOpenDialog(window, {
-        title: "选择会话记录目录",
-        properties: ["openDirectory", "createDirectory"],
-      });
-      if (result.canceled) return null;
-      const selected = result.filePaths[0];
-      await request("directory", selected);
-      directory = selected;
-      await mkdir(app.getPath("userData"), { recursive: true });
-      await writeFile(prefs, JSON.stringify({ directory }), { mode: 0o600 });
-      return directory;
-    });
-    let exporting = false;
-    handle("cancel-export", () => request("cancelExport"));
-    handle("export-log", async (options) => {
-      if (exporting) throw Error("已有导出正在进行");
-      exporting = true;
-      try {
-        const chosen = await dialog.showSaveDialog(window, {
-          title: "导出日志",
-          defaultPath: join(
-            directory,
-            `Baudloom-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
-          ),
-          filters: [{ name: "文本日志", extensions: ["txt", "log"] }],
-        });
-        return chosen.canceled || !chosen.filePath
-          ? null
-          : await request("export", chosen.filePath, options);
-      } finally {
-        exporting = false;
-      }
-    });
-    handle("open-session", async () => {
-      const state = await request("snapshot");
-      if (["connecting", "connected", "stopping"].includes(state.state))
-        throw Error("请先断开设备");
-      const result = await dialog.showOpenDialog(window, {
-        title: "打开会话或文本日志",
-        properties: ["openFile"],
-        defaultPath: directory,
-        filters: [
-          { name: "会话与文本日志", extensions: ["jsonl", "txt", "log"] },
-        ],
-      });
-      return result.canceled ? null : request("open", result.filePaths[0]);
-    });
-    window.webContents.on(
-      "did-start-loading",
-      () => void request("stopSchedule").catch(console.error),
-    );
-    window.webContents.on(
-      "render-process-gone",
-      () => void request("stopSchedule").catch(console.error),
-    );
-    window.once("ready-to-show", () => window.show());
-    window.on("close", (event) => {
-      if (quitReady) return;
-      event.preventDefault();
-      if (closing) return;
-      closing = true;
-      void request("cancelExport").catch(console.error);
-      void request("stopSchedule").catch(console.error);
-      void (async () => {
-        try {
-          const state = await request("snapshot");
-          if (["connected", "connecting", "stopping"].includes(state.state)) {
-            const answer = await dialog.showMessageBox(window, {
-              type: "question",
-              message: "停止采集并退出？",
-              detail: state.sessionFile
-                ? "退出前会关闭串口并同步会话文件。"
-                : "本次未保存会话，退出后窗口缓存将丢失。",
-              buttons: ["取消", "停止并退出"],
-              defaultId: 0,
-              cancelId: 0,
-            });
-            if (answer.response !== 1) {
-              closing = false;
-              return;
-            }
-          }
-          await request("stop");
-        } catch (error) {
-          console.error(error);
-        }
-        quitReady = true;
-        core?.kill();
-        app.quit();
-      })();
-    });
-    await window.loadFile(renderer);
+    await createWindow();
   })
   .catch((error) => {
     console.error(error);
     app.exit(1);
   });
-app.on("before-quit", (event) => {
-  if (quitReady) return;
-  event.preventDefault();
-  void request("stop")
-    .catch((error) => console.error(error))
-    .finally(() => {
-      quitReady = true;
-      core?.kill();
-      app.quit();
-    });
+app.on("before-quit", () => {
+  quitting = true;
 });
+app.on("window-all-closed", () => app.quit());

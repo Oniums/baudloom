@@ -39,7 +39,7 @@ export function setupConnectionPanel(
   } catch {}
   type PortConfig = { path: string; baudRate: number; serial: SerialSettings };
   const memoryKey = "baudloom.port-configs.v1";
-  let recent: PortConfig[] = [];
+  const recent: PortConfig[] = [];
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(memoryKey) ?? "[]");
     if (Array.isArray(stored)) {
@@ -57,6 +57,20 @@ export function setupConnectionPanel(
       }
     }
   } catch {}
+  function configFor(path: string): PortConfig | undefined {
+    try {
+      const config = JSON.parse(
+        localStorage.getItem(memoryKey + ":" + path) ?? "null",
+      );
+      if (config?.path === path)
+        return {
+          path,
+          baudRate: parseBaudRate(String(config.baudRate)),
+          serial: serialSettings(config.serial),
+        };
+    } catch {}
+    return recent.find((entry) => entry.path === path);
+  }
   let profiles: ReturnType<typeof readProfiles> = [];
   try {
     profiles = readProfiles(localStorage.getItem("baudloom.profiles.v1"));
@@ -112,6 +126,16 @@ export function setupConnectionPanel(
     localStorage.setItem("baudloom.profiles.v1", serialized);
     profiles = next;
   }
+  window.addEventListener("storage", (event) => {
+    if (event.key !== "baudloom.profiles.v1") return;
+    try {
+      profiles = readProfiles(event.newValue);
+      list(el<HTMLSelectElement>("profile-list").value);
+      update();
+    } catch (e) {
+      failure(e);
+    }
+  });
   el("connection-options").onclick = () => {
     if (active() && context()?.serial) fill(context()!.serial!);
     update();
@@ -185,9 +209,10 @@ export function setupConnectionPanel(
   return {
     read,
     update,
-    lastPort: () => recent[0]?.path ?? "",
+    lastPort: () =>
+      localStorage.getItem("baudloom.last-port") ?? recent[0]?.path ?? "",
     restore(path: string) {
-      const config = recent.find((entry) => entry.path === path);
+      const config = configFor(path);
       if (!config) return;
       baud.value = String(config.baudRate);
       baud.dispatchEvent(new Event("input"));
@@ -195,12 +220,12 @@ export function setupConnectionPanel(
       fill(saved);
     },
     remember(config: PortConfig) {
-      recent = [
-        config,
-        ...recent.filter((entry) => entry.path !== config.path),
-      ];
       try {
-        localStorage.setItem(memoryKey, JSON.stringify(recent));
+        localStorage.setItem(
+          memoryKey + ":" + config.path,
+          JSON.stringify(config),
+        );
+        localStorage.setItem("baudloom.last-port", config.path);
       } catch (e) {
         failure(e);
       }

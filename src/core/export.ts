@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ExportRequest, ExportResult, LogRow } from "../shared";
 import { compileSearch } from "../log-search";
 import { scanSession, type SessionPart } from "./journal";
+import { rowsAfterClear } from "../clear-boundary";
 import { View } from "./view";
 
 export function validateExport(request: ExportRequest) {
@@ -14,6 +15,12 @@ export function validateExport(request: ExportRequest) {
     typeof request.sessionId !== "string" ||
     !Number.isSafeInteger(request.afterRowId) ||
     request.afterRowId < 0 ||
+    (request.partial !== undefined &&
+      (!request.partial ||
+        !Number.isSafeInteger(request.partial.line) ||
+        request.partial.line < 1 ||
+        !Number.isSafeInteger(request.partial.chars) ||
+        request.partial.chars < 1)) ||
     typeof request.query !== "string" ||
     request.query.length > 512 ||
     typeof request.exclude !== "string" ||
@@ -112,11 +119,13 @@ export async function exportText(
       await flush();
     } else {
       const filter = compileSearch(request);
-      const items = (source.rows ?? []).filter(
-        (row) =>
-          request.scope === "cache" ||
-          (row.id > request.afterRowId && filter.visible(row.text)),
-      );
+      const cached = source.rows ?? [];
+      const items =
+        request.scope === "cache"
+          ? cached
+          : rowsAfterClear(cached, request).filter((row) =>
+              filter.visible(row.text),
+            );
       // Bound each filesystem write while allowing cancellation of a large cached export.
       for (let i = 0; i < items.length; i += 256)
         await writeRows(items.slice(i, i + 256));

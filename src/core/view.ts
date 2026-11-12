@@ -7,6 +7,15 @@ import { Deque } from "./deque";
 import { LineDecoder } from "./text";
 import type { LogRow, StoredEvent } from "../shared";
 
+const hexBytes = Array.from({ length: 256 }, (_, n) =>
+  n.toString(16).padStart(2, "0"),
+);
+function hexText(bytes: Buffer, start: number, end: number) {
+  const parts = new Array<string>(end - start);
+  for (let i = start; i < end; i++) parts[i - start] = hexBytes[bytes[i]];
+  return parts.join(" ");
+}
+
 /** Display eviction never changes the journal. Every view has a bounded budget. */
 export class View {
   private limits: ViewLimits;
@@ -35,6 +44,17 @@ export class View {
   hexTotal = 0;
   private size = 0;
   private hexSize = 0;
+  private rxLines = 0;
+  clearBoundaries() {
+    const chars = this.decoder.pendingText.length;
+    return {
+      text: {
+        afterRowId: this.total,
+        partial: chars ? { line: this.rxLines + 1, chars } : undefined,
+      },
+      hex: { afterRowId: this.hexTotal },
+    };
+  }
   private decoder = new LineDecoder();
   private lastAt = "";
   private lastMono: string | undefined;
@@ -66,6 +86,7 @@ export class View {
     const rows = unchanged ? [] : buffer.slice(low);
     if (partial && !unchanged && total >= afterId)
       rows.push({
+        rxLine: this.rxLines + 1,
         id: total,
         at: this.lastRxAt,
         mono: this.lastRxMono,
@@ -76,6 +97,7 @@ export class View {
   }
   private add(at: string, dir: string, text: string, hex = false) {
     const row = {
+      rxLine: !hex && dir === "RX" ? ++this.rxLines : undefined,
       id: hex ? ++this.hexTotal : ++this.total,
       at,
       mono: this.lastMono,
@@ -109,16 +131,7 @@ export class View {
       const b = Buffer.from(e.data ?? "", "base64");
       for (const line of this.decoder.push(b)) this.add(e.at, "RX", line);
       for (let i = 0; i < b.length; i += 32)
-        this.add(
-          e.at,
-          "RX",
-          b
-            .subarray(i, i + 32)
-            .toString("hex")
-            .match(/../g)!
-            .join(" "),
-          true,
-        );
+        this.add(e.at, "RX", hexText(b, i, Math.min(i + 32, b.length)), true);
     } else {
       if (e.kind === "stop") this.finish();
       const dir =

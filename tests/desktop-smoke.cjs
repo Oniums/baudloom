@@ -336,19 +336,20 @@ async function sendOption(page, fn) {
     const originalBottom = await controls(page)
       .locator(".composer")
       .boundingBox();
-    const bottomHandle = await controls(page)
-      .locator("#bottom-splitter")
-      .boundingBox();
-    await page.mouse.move(bottomHandle.x + 50, bottomHandle.y + 2);
+    const splitter = page.locator("#bottom-splitter");
+    await splitter.hover({ position: { x: 50, y: 2 } });
+    const bottomHandle = await splitter.boundingBox();
     await page.mouse.down();
     await page.mouse.move(bottomHandle.x + 50, bottomHandle.y - 35, {
       steps: 5,
     });
     await page.mouse.up();
-    assert.ok(
-      (await controls(page).locator(".composer").boundingBox()).height >
-        originalBottom.height + 25,
-    );
+    await expect
+      .poll(
+        async () =>
+          (await controls(page).locator(".composer").boundingBox()).height,
+      )
+      .toBeGreaterThan(originalBottom.height + 25);
     const savedLayout = await page.evaluate(() =>
       localStorage.getItem("baudloom.layout.v1"),
     );
@@ -491,8 +492,8 @@ async function sendOption(page, fn) {
       )
       .toBeGreaterThan(count + 3);
     assert.equal(await controls(page).locator("#log").textContent(), visible);
-    await controls(page).locator("#pause").click();
     await controls(page).locator("#clear").click();
+    await expect(page.locator("#pause")).toHaveText("暂停滚动");
     await page.waitForFunction(
       () => document.querySelectorAll(".log-row").length > 0,
     );
@@ -593,8 +594,8 @@ async function sendOption(page, fn) {
     await page.screenshot({
       path: ".local/screenshots/desktop-multi-send.png",
     });
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].setContentSize(760, 560),
+    await app.evaluate(({ BaseWindow }) =>
+      BaseWindow.getAllWindows()[0].setContentSize(760, 560),
     );
     await page.waitForFunction(() => innerWidth === 760);
     // The splitter's ResizeObserver clamps the saved width after native window resize.
@@ -611,8 +612,8 @@ async function sendOption(page, fn) {
     await page.screenshot({
       path: ".local/screenshots/desktop-small-send.png",
     });
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].setContentSize(1280, 820),
+    await app.evaluate(({ BaseWindow }) =>
+      BaseWindow.getAllWindows()[0].setContentSize(1280, 820),
     );
     await page.waitForFunction(() => innerWidth === 1280);
     await showBank(page, false);
@@ -636,13 +637,11 @@ async function sendOption(page, fn) {
     const closingFile = (await page.evaluate(() => window.baudloom.snapshot()))
       .sessionFile;
     const closed = app.waitForEvent("close");
-    await app.evaluate(({ BrowserWindow, dialog }) => {
-      dialog.showMessageBox = async () => ({
-        response: 1,
-        checkboxChecked: false,
-      });
-      BrowserWindow.getAllWindows()[0].close();
+    await app.evaluate(({ BaseWindow }) => {
+      BaseWindow.getAllWindows()[0].close();
     });
+    await expect(page.locator("#close-dialog")).toContainText("会话文件");
+    await page.getByRole("button", { name: "断开并退出" }).click();
     await closed;
     app = undefined;
     const finalRecords = (await readFile(closingFile, "utf8"))
@@ -915,8 +914,8 @@ async function sendOption(page, fn) {
     await expect(controls(production).locator(".log-row")).toHaveCount(0);
     await controls(production).locator("#match-case").uncheck();
     await expect(controls(production).locator(".log-row")).toHaveCount(1);
-    await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].setContentSize(760, 560),
+    await app.evaluate(({ BaseWindow }) =>
+      BaseWindow.getAllWindows()[0].setContentSize(760, 560),
     );
     await expect
       .poll(() =>

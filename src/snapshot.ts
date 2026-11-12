@@ -18,8 +18,13 @@ export function mergeSnapshot(
   )
     return { ...next, rows: previous.rows };
   const replaceFrom = next.rows[0]?.id ?? Infinity;
+  // The retained rows in a snapshot are contiguous within each display mode.
+  const first = previous.rows[0]?.id ?? update.firstId;
   const rows = previous.rows
-    .filter((row) => row.id >= update.firstId && row.id < replaceFrom)
+    .slice(
+      Math.max(0, update.firstId - first),
+      Math.max(0, replaceFrom - first),
+    )
     .concat(next.rows);
   if (rows.length !== update.count)
     throw Error("日志缓存不同步，请重新获取缓存");

@@ -125,8 +125,8 @@ const path = require("node:path");
       [1280, 820],
     ]) {
       await app.evaluate(
-        ({ BrowserWindow }, size) =>
-          BrowserWindow.getAllWindows()[0].setContentSize(...size),
+        ({ BaseWindow }, size) =>
+          BaseWindow.getAllWindows()[0].setContentSize(...size),
         size,
       );
       await expect

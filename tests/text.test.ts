@@ -19,6 +19,13 @@ test("unbroken lines are bounded without losing byte order", () => {
   ]);
   assert.deepEqual(d.finish(), ["7890"]);
 });
+test("bounded lines preserve astral characters, empty lines and split CRLF", () => {
+  const d = new LineDecoder(3);
+  assert.deepEqual(d.push(Buffer.from("ab😀\r")), ["ab😀", ""]);
+  assert.deepEqual(d.push(Buffer.alloc(0)), []);
+  assert.deepEqual(d.push(Buffer.from("\n\r\n中")), [""]);
+  assert.deepEqual(d.finish(), ["中"]);
+});
 test("new decoder cannot complete an old connection partial character", () => {
   const first = new LineDecoder();
   first.push(Buffer.from([0xe4, 0xb8]));

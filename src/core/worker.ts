@@ -45,6 +45,9 @@ process.parentPort.on("message", async ({ data }) => {
           throw Error("无效显示格式");
         result = capture.snapshot(args[0], args[1]);
         break;
+      case "status":
+        result = capture.status();
+        break;
       case "mark":
         result = await capture.mark(args[0]);
         break;
