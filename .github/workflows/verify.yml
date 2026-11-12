@@ -27,7 +27,8 @@ jobs:
       - name: Exercise packaged executable
         shell: pwsh
         run: |
-          $env:BAUDLOOM_EXECUTABLE = Join-Path $PWD 'artifacts/Baudloom-win32-x64/Baudloom.exe'
+          Expand-Archive artifacts/Baudloom-Windows-x64.zip -DestinationPath $env:RUNNER_TEMP/baudloom-release
+          $env:BAUDLOOM_EXECUTABLE = Join-Path $env:RUNNER_TEMP 'baudloom-release/Baudloom-win32-x64/Baudloom.exe'
           node tests/desktop-smoke.cjs
           node tests/workflow-desktop.cjs
           node tests/two-pane-desktop.cjs
@@ -35,6 +36,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: baudloom-windows-x64
-          path: artifacts/Baudloom.exe
+          path: artifacts/Baudloom-Windows-x64.zip
           if-no-files-found: error
           retention-days: 7

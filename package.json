@@ -1,6 +1,6 @@
 {
   "name": "baudloom",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "A local serial workbench with durable session records",
   "main": "dist/desktop/main.cjs",
@@ -31,7 +31,6 @@
     "@resvg/resvg-js": "2.6.2",
     "@types/node": "22.20.5",
     "electron": "45.2.1",
-    "electron-builder": "26.18.0",
     "esbuild": "0.28.2",
     "prettier": "3.9.10",
     "tsx": "4.23.15",

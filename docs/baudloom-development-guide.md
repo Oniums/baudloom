@@ -26,7 +26,7 @@ npm run benchmark:soak
 npm run package:win
 ```
 
-Windows 单文件输出为 `artifacts/Baudloom.exe`（内部版本仍随发布更新）。`artifacts/Baudloom-win32-x64` 为打包中间结果；Linux 验证包可使用 `npm run package:linux`。
+Windows 输出为 `artifacts/Baudloom-Windows-x64.zip`，内部包含完整的 `Baudloom-win32-x64/` 应用目录。Windows 构建使用系统的 `tar.exe` 创建 ZIP，在其他系统交叉构建 Windows 包时需要 `zip`。Linux 验证包使用 `npm run package:linux`。
 
 打包后测试用 `BAUDLOOM_EXECUTABLE` 指定应用可执行文件。Linux 无桌面环境需要 Xvfb 和 Electron 系统依赖。root 测试环境的 `--no-sandbox` 仅由测试启动器添加，产品入口不添加。
 
@@ -34,7 +34,7 @@ Windows 单文件输出为 `artifacts/Baudloom.exe`（内部版本仍随发布�
 
 ## 启动与刷新
 
-从 0.1.3 起使用 ASAR 合并应用文件，`.node` 原生绑定保留为实际文件；Electron 只保留 `zh-CN` 和 `en-US` 语言资源。便携包启用 `useZip`，使用 NSIS 内置 zlib 直接解包，避免先提取 7z、再解压、再复制的路径；每次启动分配独立 TEMP 目录，退出清理。本方案仍需每次解包，包体积比 0.1.2 大。参考 [Electron ASAR](https://www.electronjs.org/docs/latest/tutorial/asar-archives) 与 [portable 配置](https://www.electron.build/docs/api/app-builder-lib.interface.portableoptions/)。
+从 0.1.3 起使用 ASAR 合并应用文件，`.node` 原生绑定保留为实际文件；Electron 只保留 `zh-CN` 和 `en-US` 语言资源。Windows 用户下载后解压一次，启动时直接从应用目录加载运行库与 ASAR。构建时只归档本次生成的应用目录，已安装的应用与用户数据不参与打包。
 
 启动时读取会话目录偏好，每个新标签页用当前默认目录启动自己的采集进程。初始视图、设备枚举和目录显示分别加载，枚举慢时不阻挡首个视图。
 
@@ -46,7 +46,7 @@ Windows 单文件输出为 `artifacts/Baudloom.exe`（内部版本仍随发布�
 
 ## 数据与存储语义
 
-默认根目录为原始便携启动器目录下的 `Baudloom-data`。`PORTABLE_EXECUTABLE_DIR` 用于定位原始 EXE，目录包使用其可执行文件目录，开发模式使用项目根目录。测试可通过 `BAUDLOOM_DATA_DIR` 指向临时目录。不可写时明确报错，不静默改存其他路径。
+默认数据目录为 `Baudloom.exe` 同级的 `Baudloom-data`。`PORTABLE_EXECUTABLE_DIR` 用于定位原始 EXE，目录包使用其可执行文件目录，开发模式使用项目根目录。测试可通过 `BAUDLOOM_DATA_DIR` 指向临时目录。不可写时明确报错，不静默改存其他路径。
 
 原始事件使用 JSONL：版本、文件会话 ID、序号、UTC、单调时钟、来源、端口、波特率及事件数据。RX/TX 字节为 base64，单条 SHA-256 用于发现意外损坏，不提供身份认证。
 

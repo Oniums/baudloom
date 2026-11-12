@@ -2,7 +2,7 @@
 
 Baudloom 是一个以接收日志为主的桌面串口调试工具。在同一个窗口里打开多个 COM 口，每个标签页都有自己的日志、发送草稿和会话记录。支持 UTF-8 与 HEX 收发，中文界面，本地运行。
 
-**[下载 Windows x64 便携版](https://github.com/Oniums/baudloom/releases/latest/download/Baudloom.exe)** · [0.1.7 发布说明与校验文件](https://github.com/Oniums/baudloom/releases/tag/v0.1.7) · [更新记录](CHANGELOG.md) · [报告问题](https://github.com/Oniums/baudloom/issues)
+**[下载 Windows x64 目录版（ZIP）](https://github.com/Oniums/baudloom/releases/latest/download/Baudloom-Windows-x64.zip)** · [0.1.8 发布说明与校验文件](https://github.com/Oniums/baudloom/releases/tag/v0.1.8) · [更新记录](CHANGELOG.md) · [报告问题](https://github.com/Oniums/baudloom/issues)
 
 ![深色主界面，两个串口同时在线，右侧逐条发送命令，左侧查看当前端口的收发日志](docs/assets/baudloom-tabs.png)
 
@@ -10,12 +10,12 @@ Baudloom 是一个以接收日志为主的桌面串口调试工具。在同一�
 
 ## 第一次连接
 
-1. 下载 `Baudloom.exe`，放在可写目录后双击运行。程序会在同级目录创建 `Baudloom-data`。
+1. 下载 `Baudloom-Windows-x64.zip`，将整个压缩包解压到可写目录。打开解压后的 `Baudloom-win32-x64` 文件夹，双击其中的 `Baudloom.exe`。以后直接运行这个 EXE，也可以为它创建桌面快捷方式。
 2. 在左上角下拉框选择 COM 口。点 **设置** 调整波特率、数据位、停止位、奇偶校验、流控或 DTR/RTS，再点 **连接**。下次启动会预选上次成功打开的端口，恢复该端口的参数。
 3. 设备输出会出现在接收区。在底部选择 **文本** 或 **HEX**，填入命令，点 **发送**，也可以按 `Ctrl+Enter`。文本输入框中的 `Enter` 用于换行。
 4. 需要留档时，点左下角 **未保存**，勾选 **保存会话**。连接前勾选可从头记录，连接中勾选会补写仍在缓存里的原始事件。点保存状态可查看实际路径和写入进度。
 
-升级时先退出正在运行的 Baudloom，再替换原目录中的 EXE。保留同级的 `Baudloom-data` 即可沿用配置与会话。
+**从旧版升级：**先完全退出 Baudloom，将新 ZIP 解压到新文件夹。首次启动前，把旧 EXE 旁的整个 `Baudloom-data` 文件夹复制到新 `Baudloom.exe` 旁，即可沿用串口配置、命令和默认目录下的会话。自选目录中的会话继续保存在原位置。启动新版后，将原有快捷方式指向新 EXE。
 
 ## 同时调试多个串口
 
@@ -55,7 +55,7 @@ Baudloom 是一个以接收日志为主的桌面串口调试工具。在同一�
 
 ## 使用范围
 
-Windows x64 发布包为单文件便携版，启动时会将依赖解包到系统临时目录。当前发布包未签名，升级需手动替换。可输入 50–4,000,000 范围内的整数波特率，实际支持取决于设备和驱动。硬件流控时握手线由驱动管理。
+Windows x64 目录版从解压目录直接加载运行库。移动程序时请保留整个文件夹，包括 DLL、`resources` 和 `locales`。当前发布包未签名，升级需手动下载。可输入 50–4,000,000 范围内的整数波特率，实际支持取决于设备和驱动。硬件流控时握手线由驱动管理。
 
 日志查找和复制覆盖当前显示缓存。超过 8192 字符的长行会分段显示。自动化验证使用合成设备，实体串口的驱动兼容性和长期负载仍需实机验证。
 
