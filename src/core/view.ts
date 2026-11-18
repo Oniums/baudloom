@@ -56,7 +56,6 @@ export class View {
     };
   }
   private decoder = new LineDecoder();
-  private lastAt = "";
   private lastMono: string | undefined;
   private lastRxMono: string | undefined;
   private lastRxAt = "";
@@ -95,12 +94,18 @@ export class View {
       });
     return { rows, total, count, firstId };
   }
-  private add(at: string, dir: string, text: string, hex = false) {
+  private add(
+    at: string,
+    dir: string,
+    text: string,
+    hex = false,
+    mono = this.lastMono,
+  ) {
     const row = {
       rxLine: !hex && dir === "RX" ? ++this.rxLines : undefined,
       id: hex ? ++this.hexTotal : ++this.total,
       at,
-      mono: this.lastMono,
+      mono,
       dir,
       text,
     };
@@ -123,13 +128,19 @@ export class View {
   }
   apply(e: StoredEvent) {
     this.revision++;
-    this.lastAt = e.at;
     this.lastMono = e.mono;
     if (e.kind === "rx") {
-      this.lastRxAt = e.at;
-      this.lastRxMono = e.mono;
       const b = Buffer.from(e.data ?? "", "base64");
-      for (const line of this.decoder.push(b)) this.add(e.at, "RX", line);
+      // Keep the timestamp of the first visible fragment until its line completes.
+      if (!this.decoder.pendingText) {
+        this.lastRxAt = e.at;
+        this.lastRxMono = e.mono;
+      }
+      for (const line of this.decoder.push(b)) {
+        this.add(this.lastRxAt, "RX", line, false, this.lastRxMono);
+        this.lastRxAt = e.at;
+        this.lastRxMono = e.mono;
+      }
       for (let i = 0; i < b.length; i += 32)
         this.add(e.at, "RX", hexText(b, i, Math.min(i + 32, b.length)), true);
     } else {

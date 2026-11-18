@@ -894,6 +894,28 @@ dialog h2 {
   display: flex;
   gap: 16px;
 }
+.export-options .check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 20px;
+}
+.export-options .check-label input {
+  margin: 0;
+}
+#log-context:popover-open {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  display: grid;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface);
+}
+#log-context button {
+  text-align: left;
+}
 #export-status {
   display: block;
   white-space: pre-wrap;
@@ -1811,6 +1833,26 @@ main {
 #counts {
   margin-left: auto;
   font: 11px var(--mono);
+}
+#app-version {
+  border-left: 1px solid var(--rule);
+  padding-left: 8px;
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+:root {
+  --log-cool: #94b8cc;
+  --log-warm: #d6b589;
+}
+:root[data-theme="light"] {
+  --log-cool: #406780;
+  --log-warm: #885920;
+}
+main.log-colors #log :is(.time, .log-value) {
+  color: var(--log-cool);
+}
+main.log-colors #log .log-warning {
+  color: var(--log-warm);
 }
 body.log-only :is(.composer, #bottom-splitter) {
   display: none;

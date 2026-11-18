@@ -746,6 +746,7 @@ async function sendOption(page, fn) {
         dir: "RX",
         text:
           `fixture line ${index} ` +
+          (index === 2 ? "\0" : "") +
           (index % 50 === 0 ? "中文长行".repeat(150) : "serial data"),
       }));
       ipcMain.handle("snapshot", () => ({
@@ -813,10 +814,14 @@ async function sendOption(page, fn) {
         second: "2-digit",
         hour12: false,
       }).format(new Date(rows[0].at));
-      return rows.map((r) => "[" + time + ".000]收← " + r.text).join("\n");
+      return rows
+        .map((r) => "[" + time + ".000]收← " + r.text.replaceAll("\0", "␀"))
+        .join("\n");
     });
-    await production.locator("#log").focus();
+    await production.locator("#pause").focus();
     await production.keyboard.press("Control+a");
+    await expect(production.locator("#log")).toBeFocused();
+    assert.equal(await production.locator(".selection-chunk").count(), 0);
     const copyText = () =>
       production.evaluate(() => {
         const data = new DataTransfer();
@@ -833,7 +838,31 @@ async function sendOption(page, fn) {
       (await copyText()) === allText,
       "all 50,000 rows including wrapped lines must copy exactly",
     );
+    // A synthetic ClipboardEvent cannot detect a Windows CF_UNICODETEXT truncation.
+    // Exercise the system clipboard on the disposable CI desktop.
+    if (process.platform === "win32" && process.env.GITHUB_ACTIONS === "true") {
+      await production.keyboard.press("Control+c");
+      await production.evaluate(() => {
+        const target = document.createElement("textarea");
+        target.id = "paste-probe";
+        document.body.append(target);
+        target.focus();
+      });
+      await production.keyboard.press("Control+v");
+      assert.ok(
+        (await production.locator("#paste-probe").inputValue()) === allText,
+      );
+      await production
+        .locator("#paste-probe")
+        .evaluate((node) => node.remove());
+      await production.locator("#log").focus();
+    }
     // Extend a partial selection from a previously unmounted line into the last screen.
+    await production.evaluate(() => {
+      const text = document.querySelector("#log .log-row .content").firstChild;
+      window.getSelection().setBaseAndExtent(text, 0, text, 1);
+    });
+    await expect(production.locator(".selection-chunk").first()).toBeAttached();
     const startText = "fixture line 5 ";
     const endText = "fixture line 49997 serial";
     await production.evaluate(

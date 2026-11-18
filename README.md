@@ -2,7 +2,7 @@
 
 Baudloom 是一个以接收日志为主的桌面串口调试工具。在同一个窗口里打开多个 COM 口，每个标签页都有自己的日志、发送草稿和会话记录。支持 UTF-8 与 HEX 收发，中文界面，本地运行。
 
-**[下载 Windows x64 目录版（ZIP）](https://github.com/Oniums/baudloom/releases/latest/download/Baudloom-Windows-x64.zip)** · [0.1.8 发布说明与校验文件](https://github.com/Oniums/baudloom/releases/tag/v0.1.8) · [更新记录](CHANGELOG.md) · [报告问题](https://github.com/Oniums/baudloom/issues)
+**[下载 Windows x64 目录版（ZIP）](https://github.com/Oniums/baudloom/releases/latest/download/Baudloom-Windows-x64.zip)** · [0.1.9 发布说明与校验文件](https://github.com/Oniums/baudloom/releases/tag/v0.1.9) · [更新记录](CHANGELOG.md) · [报告问题](https://github.com/Oniums/baudloom/issues)
 
 ![深色主界面，两个串口同时在线，右侧逐条发送命令，左侧查看当前端口的收发日志](docs/assets/baudloom-tabs.png)
 
@@ -32,7 +32,8 @@ Baudloom 是一个以接收日志为主的桌面串口调试工具。在同一�
 
 - **跟随与回看**　向上滚动可停在当前位置阅读，界面会显示新增行数。滚回底部或点 **回到最新** 恢复跟随。点 **专注** 可为日志腾出整个工作区。
 - **查找**　按 `Ctrl+F` 输入关键词。多个词用 `|` 分隔，按 `Enter` / `Shift+Enter` 跳到下一处或上一处。可切换只看匹配行、保留上下文或排除关键词。关闭查找即可恢复显示。
-- **复制**　在接收区拖选并按 `Ctrl+C`。需要全部内容时，先点接收区，再按 `Ctrl+A`、`Ctrl+C`，即可复制当前视图里仍保留的全部日志，包括屏幕以外的行。
+- **着色**　时间和数值使用蓝色，告警关键词使用琥珀色。点击接收区 **… → 接收视图 → 日志着色** 可关闭。
+- **复制**　在接收区拖选并按 `Ctrl+C`。需要全部内容时，先点接收区，再按 `Ctrl+A`、`Ctrl+C`，即可复制当前视图里仍保留的全部日志，包括屏幕以外的行。也可右键选择「全选日志」或「复制所选日志」。空字节在文本中显示为 `␀`。
 - **清屏**　在接收区 **…** 中点 **清屏**，从当前位置继续看新数据。清屏、暂停和查找都保留原始缓存与已保存文件。
 - **视图**　接收工具栏可切换 UTF-8 / HEX。在 **…** 中可调整字号、换行、时间、收发方向和缓存大小。默认保留 10,000 行 / 4 Mi 字符，可调至 50,000 行 / 16 Mi 字符。**标记与计时** 可定位标记或测量两条日志的主机记录时间差。
 

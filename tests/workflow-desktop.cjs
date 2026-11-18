@@ -127,6 +127,33 @@ const path = require("node:path");
           .evaluate((n) => n.scrollHeight - n.clientHeight - n.scrollTop),
       )
       .toBeLessThanOrEqual(2);
+    // A continuing stream must keep overlapping rows mounted and the tail visible.
+    const stableTail = await page.locator("#log").evaluate(async (log) => {
+      const rows = log.querySelectorAll(".log-row");
+      const retained = rows[rows.length - 3];
+      const last = rows[rows.length - 1].dataset.rowId;
+      return new Promise((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (log.querySelector(".log-row:last-child")?.dataset.rowId === last)
+            return;
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(
+            retained.isConnected &&
+              log.scrollHeight - log.clientHeight - log.scrollTop <= 2,
+          );
+        });
+        const timer = setTimeout(() => {
+          observer.disconnect();
+          resolve(false);
+        }, 5000);
+        observer.observe(log, { childList: true, subtree: true });
+      });
+    });
+    assert.ok(
+      stableTail,
+      "new data should preserve existing rows and stay at the tail",
+    );
     await page.mouse.wheel(0, -250);
     await expect(controls(page).locator("#back-to-latest")).toBeVisible();
     await controls(page).locator("#back-to-latest").click();

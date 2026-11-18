@@ -5,6 +5,7 @@ import {
   type ViewLimits,
 } from "../view-settings";
 interface Preferences {
+  logColors: boolean;
   wrapLines: boolean;
   showTime: boolean;
   showDirection: boolean;
@@ -18,6 +19,7 @@ export function setupViewControls(
 ) {
   const key = "baudloom.view.v1";
   const prefs: Preferences = {
+    logColors: true,
     wrapLines: true,
     showTime: true,
     showDirection: true,
@@ -26,7 +28,12 @@ export function setupViewControls(
   };
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? "{}");
-    for (const field of ["showTime", "showDirection", "wrapLines"] as const)
+    for (const field of [
+      "showTime",
+      "showDirection",
+      "wrapLines",
+      "logColors",
+    ] as const)
       if (typeof saved[field] === "boolean") prefs[field] = saved[field];
     for (const [field, min, max] of [["fontSize", 10, 28]] as const)
       if (
@@ -72,6 +79,16 @@ export function setupViewControls(
     }
   }
   const wrap = get<HTMLInputElement>("wrap-lines");
+  const colors = get<HTMLInputElement>("log-colors");
+  const applyColors = () =>
+    main.classList.toggle("log-colors", prefs.logColors);
+  colors.checked = prefs.logColors;
+  applyColors();
+  colors.onchange = () => {
+    prefs.logColors = colors.checked;
+    applyColors();
+    save();
+  };
   wrap.checked = prefs.wrapLines;
   wrap.onchange = () => {
     prefs.wrapLines = wrap.checked;

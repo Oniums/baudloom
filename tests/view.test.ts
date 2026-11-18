@@ -38,6 +38,29 @@ test("an unterminated prompt is visible and later becomes one complete line", ()
     ["prompt> OK"],
   );
 });
+test("a live RX line keeps its first fragment time across sends, completion and stop", () => {
+  const view = new View();
+  const event = (n: number, text: string) => ({
+    ...rx(n, Buffer.from(text)),
+    at: new Date(1000 * n).toISOString(),
+  });
+  view.apply(event(1, "\0"));
+  view.apply({ ...event(2, "ping"), kind: "tx-request" });
+  view.apply(event(3, "ready"));
+  assert.equal(view.textSnapshot().rows.at(-1)?.at, event(1, "").at);
+  view.apply(event(4, "\nsecond\nthird"));
+  view.apply(event(5, "!"));
+  view.finish();
+  const rows = view.textSnapshot().rows.filter((r) => r.dir === "RX");
+  assert.deepEqual(
+    rows.map((r) => [r.mono, r.text]),
+    [
+      ["1", "\0ready"],
+      ["4", "second"],
+      ["4", "third! [未终止片段]"],
+    ],
+  );
+});
 test("a partial row keeps the same bounded row and character budget", () => {
   const view = new View({ maxRows: 1000, maxChars: 1024 * 1024 });
   for (let i = 0; i < 1000; i++)

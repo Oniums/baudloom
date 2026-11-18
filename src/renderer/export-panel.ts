@@ -21,12 +21,13 @@ export function setupExport(
     selection = "";
   let captured: ReturnType<typeof context>;
   const hints = {
-    cache: "导出确认时仍保留的全部缓存，包含清屏前内容；已淘汰内容不在此范围。",
+    cache:
+      "包含清屏前和筛选隐藏的日志。超出内存上限的旧日志，可从已保存的会话导出。",
     filtered:
-      "按当前查找、排除、显示格式与清屏范围导出确认时缓存；不是整个磁盘会话。",
+      "导出内存中符合当前显示条件的所有行，包括屏幕外的行。清屏前的内容会跳过。",
     session:
-      "逐段读取完整已保存会话，不受窗口缓存上限影响。连接中导出截至开始时的已保存内容；缺段或损坏会终止导出。",
-    selection: "按原样导出接收窗口中选中的文字，仅包含已选中的可见内容。",
+      "从会话文件读取所有分段，包括已移出内存的日志。正在记录时，导出截至开始导出时已保存的内容。",
+    selection: "保留选区内的文字、时间和方向，与在接收区复制所选内容一致。",
   };
   scope.onchange = () => {
     get("export-hint").textContent = hints[scope.value as keyof typeof hints];

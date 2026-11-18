@@ -1,4 +1,5 @@
 import { setupTabs } from "./tabs";
+import { version } from "../../package.json";
 import { setupToolbar } from "./toolbar";
 import { setupConnectionPanel } from "./connection-panel";
 import { setupReading } from "./reading-panel";
@@ -22,6 +23,7 @@ setupToolbar();
 const api = window.baudloom;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+el("app-version").textContent = "v" + version;
 api.onClosePrompt((prompt) => {
   const dialog = el<HTMLDialogElement>("close-dialog");
   el("close-title").textContent = prompt.title;
@@ -100,6 +102,8 @@ let polling = false;
 let foreground = true;
 let restartPolling: (() => void) | undefined;
 let renderedKey = "";
+let searchKey = "";
+let compiled = compileSearch(currentFilter());
 let uiError = "";
 const logViewport = new LogViewport(el("log"));
 function currentFilter(): LogFilter {
@@ -375,12 +379,13 @@ function render(s: Snapshot) {
   const display = paused && frozen ? frozen : s;
   const filter = currentFilter();
   const query = filter.query;
+  const filterKey = JSON.stringify(filter);
   const key = [
     display.sessionId,
     display.totalRows,
     display.rxBytes,
     JSON.stringify(clearBoundary()),
-    JSON.stringify(filter),
+    filterKey,
     mode.value,
     display.state,
     display.rows.length,
@@ -389,7 +394,10 @@ function render(s: Snapshot) {
   ].join("|");
   if (key === renderedKey) return;
   renderedKey = key;
-  const compiled = compileSearch(filter);
+  if (searchKey !== filterKey) {
+    searchKey = filterKey;
+    compiled = compileSearch(filter);
+  }
   readingPanel.update(display.rows, display.sessionId + ":" + mode.value);
   const retained = rowsAfterClear(display.rows, clearBoundary());
   const rows =
@@ -411,6 +419,7 @@ function render(s: Snapshot) {
         : "选择串口后点击连接，或打开已有会话记录。",
     compiled.highlights,
     activeMatch,
+    rows === display.rows,
   );
 }
 async function poll() {
@@ -659,15 +668,18 @@ void (async () => {
     const epoch = ++generation;
     window.clearTimeout(timer);
     const tick = async () => {
+      const before = latest;
       if (foreground) await poll();
       else await api.refreshTabStatus().catch(failure);
-      if (epoch === generation)
-        timer = window.setTimeout(
-          tick,
-          foreground && !document.hidden && latest?.state === "connected"
-            ? 100
-            : 1000,
-        );
+      if (epoch !== generation) return;
+      let delay = 1000;
+      if (foreground && !document.hidden && latest?.state === "connected") {
+        const burst =
+          before?.sessionId === latest.sessionId &&
+          latest.totalRows - before.totalRows >= 2;
+        delay = !paused && burst ? 40 : 100;
+      }
+      timer = window.setTimeout(tick, delay);
     };
     void tick();
   };

@@ -288,8 +288,13 @@
       <footer class="statusbar">
         <button id="record-state" title="查看记录详情">未保存</button
         ><button id="stop-sending" type="button" hidden>停止定时</button
-        ><span id="counts">RX 0 B · TX 0 B</span>
+        ><span id="counts">RX 0 B · TX 0 B</span
+        ><span id="app-version" title="Baudloom 软件版本"></span>
       </footer>
+    </div>
+    <div id="log-context" popover aria-label="日志操作">
+      <button id="copy-log-selection">复制所选日志</button>
+      <button id="select-log-all">全选日志</button>
     </div>
     <div id="more-tools-panel" popover="" aria-label="接收操作">
       <button id="clear">清屏</button
@@ -509,11 +514,11 @@
     <dialog id="export-dialog" aria-labelledby="export-title">
       <h2 id="export-title">导出日志</h2>
       <label class="export-field"
-        >范围<select id="export-scope">
-          <option value="cache">当前缓存（含清屏前内容）</option>
-          <option value="filtered">当前筛选结果</option>
-          <option value="session">完整已保存会话</option>
-          <option value="selection">选中文字（按原样）</option>
+        >导出内容<select id="export-scope" aria-describedby="export-hint">
+          <option value="cache">内存中保留的全部日志</option>
+          <option value="filtered">按当前显示条件导出</option>
+          <option value="session">磁盘上的完整会话记录</option>
+          <option value="selection">仅导出鼠标或键盘选中的文字</option>
         </select></label
       >
       <p id="export-hint"></p>
@@ -542,6 +547,8 @@
         <div class="view-setting-row">
           <label class="check-label"
             ><input id="wrap-lines" type="checkbox" checked="" />自动换行</label
+          ><label class="check-label"
+            ><input id="log-colors" type="checkbox" checked />日志着色</label
           >
         </div>
         <div class="view-setting-row">
